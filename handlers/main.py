@@ -35,17 +35,35 @@ TELEGRAM_STARS_PROVIDER_TOKEN = ""
 # ==================== КЛАВИАТУРЫ ====================
 
 
-def get_main_menu() -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(
-        inline_keyboard=[
-            [InlineKeyboardButton(text="🏠 Профиль", callback_data="menu_balance")],
-            [InlineKeyboardButton(text="💼 Бизнесы", callback_data="menu_business")],
-            [InlineKeyboardButton(text="📊 Рынок", callback_data="menu_market")],
-            [InlineKeyboardButton(text="🎁 Магазин", callback_data="menu_shop")],
-            [InlineKeyboardButton(text="🔝 Топ", callback_data="menu_top")],
-            [InlineKeyboardButton(text="👥 Рефералы", callback_data="menu_referrals")],
-        ]
-    )
+async def get_bot_username(bot: Bot) -> str:
+    """Получить username бота"""
+    try:
+        bot_info = await bot.get_me()
+        return bot_info.username
+    except:
+        return ""
+
+
+def get_main_menu(bot_username: str = None) -> InlineKeyboardMarkup:
+    keyboard = [
+        [InlineKeyboardButton(text="🏠 Профиль", callback_data="menu_balance")],
+        [InlineKeyboardButton(text="💼 Бизнесы", callback_data="menu_business")],
+        [InlineKeyboardButton(text="📊 Рынок", callback_data="menu_market")],
+        [InlineKeyboardButton(text="🎁 Магазин", callback_data="menu_shop")],
+        [InlineKeyboardButton(text="🔝 Топ", callback_data="menu_top")],
+        [InlineKeyboardButton(text="👥 Рефералы", callback_data="menu_referrals")],
+    ]
+    
+    # Добавляем кнопку добавления бота в чат
+    if bot_username:
+        keyboard.append(
+            [InlineKeyboardButton(
+                text="➕ Добавить бота в чат",
+                url=f"https://t.me/{bot_username}?startgroup=true"
+            )]
+        )
+    
+    return InlineKeyboardMarkup(inline_keyboard=keyboard)
 
 
 def get_energy_menu() -> InlineKeyboardMarkup:
@@ -216,7 +234,8 @@ async def cmd_start(message: Message):
 
 👥 Рефералы → бонусы!
 """
-    await message.answer(welcome, reply_markup=get_main_menu())
+    bot_username = await get_bot_username(message.bot)
+    await message.answer(welcome, reply_markup=get_main_menu(bot_username))
 
 
 # ==================== ПРОФИЛЬ (С ЭНЕРГИЕЙ) ====================
@@ -271,11 +290,18 @@ async def menu_balance(callback: CallbackQuery):
         for event in active_events[:2]:
             text += f"• {event['name']}\n"
 
+    # Получаем username бота для кнопки
+    try:
+        bot_info = await callback.bot.get_me()
+        bot_username = bot_info.username
+    except:
+        bot_username = None
+
     # Если энергия кончилась - показываем меню покупки
     if energy_status["current"] < config.MIN_ENERGY_TO_WORK:
         await callback.message.edit_text(text, reply_markup=get_no_energy_menu())
     else:
-        await callback.message.edit_text(text, reply_markup=get_main_menu())
+        await callback.message.edit_text(text, reply_markup=get_main_menu(bot_username))
 
     await callback.answer()
 
@@ -364,11 +390,12 @@ async def upgrade_business(callback: CallbackQuery):
     if success:
         biz = db.get_business(business_id)
         biz_config = config.BUSINESSES.get(biz["business_type"], {})
+        bot_username = await get_bot_username(callback.bot)
         await callback.message.edit_text(
             f"⬆️ <b>Апгрейд!</b>\n\n"
             f"{biz_config.get('name', biz['business_type'])} → Ур.{biz['level']}\n"
             f"💵 Потрачено: ${cost:.2f}",
-            reply_markup=get_main_menu(),
+            reply_markup=get_main_menu(bot_username),
         )
         await callback.answer("✅ Апгрейд выполнен!", show_alert=True)
     else:
@@ -526,16 +553,20 @@ async def buy_energy_20(callback: CallbackQuery, bot: Bot):
 @router.callback_query(F.data == "buy_energy_50")
 async def buy_energy_50(callback: CallbackQuery, bot: Bot):
     """Покупка энергии за Stars"""
-    success = await send_invoice_to_user(bot, callback.from_user.id, "energy_50")
+    user_id = callback.from_user.id
+    success = await send_invoice_to_user(bot, user_id, "energy_50")
     if success:
         await callback.answer("💳 Отправляю счёт...", show_alert=True)
     else:
         await callback.answer("❌ Ошибка!", show_alert=True)
+        return
+    
+    bot_username = await get_bot_username(bot)
     energy = EnergyService.get_user_energy_status(user_id)
 
     await callback.message.edit_text(
         f"🔥 <b>Супер энергия!</b>\n\n⚡ {energy['current']:.0f}/{energy['max']}",
-        reply_markup=get_main_menu(),
+        reply_markup=get_main_menu(bot_username),
     )
     await callback.answer("✅ +50 энергии!", show_alert=True)
 
@@ -555,7 +586,8 @@ async def menu_top(callback: CallbackQuery):
         name = player["username"] or f"User{player['user_id']}"
         text += f"{medal} {name} — ${player['balance']:.2f}\n"
 
-    await callback.message.edit_text(text, reply_markup=get_main_menu())
+    bot_username = await get_bot_username(callback.bot)
+    await callback.message.edit_text(text, reply_markup=get_main_menu(bot_username))
     await callback.answer()
 
 
@@ -565,10 +597,7 @@ async def menu_referrals(callback: CallbackQuery):
     referrals = db.get_referrals(user_id)
     count = len(referrals)
 
-    try:
-        bot_username = (await callback.bot.get_me()).username
-    except:
-        bot_username = "YourBot"
+    bot_username = await get_bot_username(callback.bot)
 
     text = f"""👥 <b>Рефералы</b>
 
@@ -579,7 +608,7 @@ async def menu_referrals(callback: CallbackQuery):
 https://t.me/{bot_username}?start={user_id}
 """
 
-    await callback.message.edit_text(text, reply_markup=get_main_menu())
+    await callback.message.edit_text(text, reply_markup=get_main_menu(bot_username))
     await callback.answer()
 
 
@@ -671,8 +700,9 @@ async def chat_transfer(message: Message):
 
 @router.callback_query(F.data == "menu_main")
 async def menu_main(callback: CallbackQuery):
+    bot_username = await get_bot_username(callback.bot)
     await callback.message.edit_text(
-        "📋 <b>Главное меню:</b>", reply_markup=get_main_menu()
+        "📋 <b>Главное меню:</b>", reply_markup=get_main_menu(bot_username)
     )
     await callback.answer()
 
@@ -754,11 +784,16 @@ async def chat_transfer(message: Message):
 
     to_user = row[0]
     from_user = message.from_user.id
+    chat_id = message.chat.id
 
-    success, result = db.transfer_money(from_user, to_user, amount, message.chat.id)
+    success, result = db.transfer_money(from_user, to_user, amount, chat_id)
 
     if success:
         db.log_action(from_user, "chat_transfer", f"To @{username}: ${amount}")
+        
+        # Начисляем XP чату за перевод
+        db.add_chat_xp(chat_id, config.XP_PER_TRANSFER)
+        
         await message.reply(
             f"✅ {message.from_user.first_name} → @{username}: ${amount:.2f}\n"
             f"💰 Ваш баланс: ${db.get_balance(from_user):.2f}"
@@ -973,6 +1008,10 @@ async def chat_level(message: Message):
 
     # Получаем бонусы уровня
     bonuses = db.get_chat_bonus(chat_id)
+    
+    # Проверяем VIP чата
+    is_vip = db.is_chat_vip(chat_id)
+    vip_text = "⭐ <b>VIP активен</b>" if is_vip else ""
 
     bonuses_text = ""
     if level >= 2:
@@ -983,8 +1022,27 @@ async def chat_level(message: Message):
         bonuses_text += f"\n• Level 4: -10% расход энергии"
     if level >= 5:
         bonuses_text += f"\n• Level 5: +10% шанс в джекпоте"
+    if is_vip:
+        bonuses_text += f"\n• ⭐ VIP: +10% XP, +5% доход"
 
-    text = f"""🏆 <b>Уровень чата</b>
+    keyboard = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="📈 Буст XP (+100) - 10⭐",
+                    callback_data="buy_xp_boost_chat"
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text="⭐ VIP Чат (7 дней) - 50⭐",
+                    callback_data="buy_vip_chat"
+                )
+            ],
+        ]
+    )
+
+    text = f"""🏆 <b>Уровень чата</b> {vip_text}
 
 📊 Уровень: {level}
 ⭐ XP: {xp}/{xp_needed}
@@ -992,7 +1050,7 @@ async def chat_level(message: Message):
 
 💡 Бонусы:{bonuses_text or "\n• Пока нет бонусов"}"""
 
-    await message.reply(text)
+    await message.reply(text, reply_markup=keyboard)
 
 
 @router.message(F.chat.type != "private", F.text == "/топ_чаты")
@@ -1075,6 +1133,11 @@ ITEMS_CONFIG = {
         "stars": 10,
         "description": "Добавить 100 XP текущему чату",
     },
+    "vip_chat": {
+        "name": "⭐ VIP Чат (7 дней)",
+        "stars": 50,
+        "description": "VIP статус для чата на 7 дней с бонусами",
+    },
 }
 
 
@@ -1122,9 +1185,9 @@ async def buy_with_stars(callback: CallbackQuery, bot: Bot):
         await callback.answer("❌ Неизвестный товар!", show_alert=True)
         return
 
-    # Для XP буста нужен chat_id
+    # Для XP буста и VIP чата нужен chat_id
     chat_id = None
-    if item_key == "xp_boost_chat":
+    if item_key in ["xp_boost_chat", "vip_chat"]:
         if callback.message.chat.type == "private":
             await callback.answer("❌ Эта покупка только в чатах!", show_alert=True)
             return
@@ -1149,25 +1212,39 @@ async def pre_checkout(pre_checkout: PreCheckoutQuery):
     await pre_checkout.answer(ok=True)
 
 
-async def process_successful_payment(user_id: int, item_key: str, chat_id: int = None):
+async def process_successful_payment(user_id: int, item_key: str, chat_id: int = None, bot: Bot = None):
     """Обработка успешного платежа - начисление товара"""
     item = ITEMS_CONFIG.get(item_key)
     if not item:
-        return False
+        return False, None
+
+    message_text = ""
 
     # Начисляем товар в зависимости от типа
     if item_key == "energy_20":
         EnergyService.add_energy(user_id, 20)
+        message_text = "⚡ +20 энергии начислено!"
     elif item_key == "energy_50":
         EnergyService.add_energy(user_id, 50)
+        message_text = "🔥 +50 энергии начислено!"
     elif item_key == "boost_1h":
         db.set_boost(user_id, 1)
+        message_text = "⚡ Буст x2 активирован на 1 час!"
     elif item_key == "shield":
         db.add_item(user_id, "shield", 1)
+        message_text = "🛡️ Щит получен!"
     elif item_key == "lottery_premium":
         db.add_item(user_id, "lottery_premium_ticket", 1)
+        message_text = "🎰 Премиум билет получен!"
     elif item_key == "xp_boost_chat" and chat_id:
-        db.add_chat_xp(chat_id, 100)
+        success, leveled_up, new_level = db.add_chat_xp(chat_id, 100)
+        if leveled_up:
+            message_text = f"📈 Чат получил +100 XP и достиг уровня {new_level}!"
+        else:
+            message_text = "📈 Чат получил +100 XP!"
+    elif item_key == "vip_chat" and chat_id:
+        db.set_chat_vip(chat_id, 7)
+        message_text = "⭐ VIP статус чата активирован на 7 дней!"
 
     # Логирование
     db.log_action(
@@ -1176,7 +1253,7 @@ async def process_successful_payment(user_id: int, item_key: str, chat_id: int =
         f"Item: {item_key}, Stars: {item['stars']}, Chat: {chat_id}",
     )
 
-    return True
+    return True, message_text
 
 
 @router.message(F.successful_payment)
@@ -1194,10 +1271,20 @@ async def successful_payment(message: Message):
     item = ITEMS_CONFIG.get(item_key, {})
 
     # Обрабатываем платёж
-    await process_successful_payment(user_id, item_key, chat_id)
+    success, message_text = await process_successful_payment(user_id, item_key, chat_id, message.bot)
 
-    # Формируем сообщение о的成功
-    success_message = f"""✅ <b>Оплата прошла успешно!</b>
+    # Формируем сообщение об успехе
+    if success and message_text:
+        success_message = f"""✅ <b>Оплата прошла успешно!</b>
+
+⭐ Потрачено: {item.get("stars", "?")}⭐
+📦 Получено: {item.get("name", "Товар")}
+
+{message_text}
+
+💪 Спасибо за покупку!"""
+    else:
+        success_message = f"""✅ <b>Оплата прошла успешно!</b>
 
 ⭐ Потрачено: {item.get("stars", "?")}⭐
 📦 Получено: {item.get("name", "Товар")}
