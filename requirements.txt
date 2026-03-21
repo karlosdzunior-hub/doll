@@ -1,0 +1,5 @@
+# Production Dependencies
+aiogram>=3.4.0
+
+# Optional: SOCKS proxy support
+# aiohttp_socks>=0.8.0
