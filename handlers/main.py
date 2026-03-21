@@ -12,6 +12,12 @@ from aiogram.types import (
     InlineKeyboardMarkup,
     InlineKeyboardButton,
     CallbackQuery,
+    BotCommand,
+    BotCommandScopeChat,
+    Update,
+    PreCheckoutQuery,
+    SuccessfulPayment,
+    ChatMemberUpdated,
 )
 from aiogram.enums import ParseMode
 from aiogram.client.bot import Bot
@@ -683,3 +689,448 @@ async def menu_main(callback: CallbackQuery):
         "📋 <b>Главное меню:</b>", reply_markup=get_main_menu()
     )
     await callback.answer()
+
+
+# ==================== ЧАТ-КОМАНДЫ ====================
+
+
+@router.message(F.chat.type != "private", F.text == "/мой_баланс")
+async def chat_balance(message: Message):
+    user_id = message.from_user.id
+    balance = db.get_balance(user_id)
+    energy, max_e = db.get_energy(user_id)
+
+    bar = EnergyService.get_energy_bar(energy, max_e)
+
+    await message.reply(
+        f"💰 {message.from_user.first_name}:\n"
+        f"Баланс: ${balance:.2f}\n"
+        f"{bar} ⚡{energy:.0f}/{max_e}"
+    )
+
+
+@router.message(F.chat.type != "private", F.text == "/мой_бизнес")
+async def chat_business(message: Message):
+    user_id = message.from_user.id
+    businesses = db.get_user_businesses(user_id)
+
+    if not businesses:
+        await message.reply("🏢 У вас нет бизнесов!")
+        return
+
+    text = "🏢 <b>Ваши бизнесы:</b>\n"
+    for biz in businesses:
+        biz_config = config.BUSINESSES.get(biz["business_type"], {})
+        text += f"• {biz_config.get('name', biz['business_type'])} Ур.{biz['level']}\n"
+
+    await message.reply(text)
+
+
+@router.message(F.chat.type != "private", F.text == "/рынок")
+async def chat_market(message: Message):
+    text = MarketService.get_market_overview()
+    await message.reply(text)
+
+
+@router.message(F.chat.type != "private", F.text == "/топ")
+async def chat_top(message: Message):
+    leaders = db.get_leaderboard(5)
+    text = "🏆 <b>ТОП-5</b>\n"
+
+    for i, player in enumerate(leaders, 1):
+        text += f"{i}. ${player['balance']:.2f}\n"
+
+    await message.reply(text)
+
+
+@router.message(
+    F.chat.type != "private", F.text.regexp(r"^/отправить\s*@?(\w+)\s*(\d+(?:\.\d+)?)")
+)
+async def chat_transfer(message: Message):
+    match = re.match(r"^/отправить\s*@?(\w+)\s*(\d+(?:\.\d+)?)", message.text)
+    if not match:
+        await message.reply(
+            "❌ Формат: /отправить @username сумма\n💡 Пример: /отправить @username 100"
+        )
+        return
+
+    username = match.group(1)
+    amount = float(match.group(2))
+
+    with db.get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT user_id FROM users WHERE username = ?", (username,))
+        row = cursor.fetchone()
+
+    if not row:
+        await message.reply(f"❌ Пользователь @{username} не найден")
+        return
+
+    to_user = row[0]
+    from_user = message.from_user.id
+
+    success, result = db.transfer_money(from_user, to_user, amount, message.chat.id)
+
+    if success:
+        db.log_action(from_user, "chat_transfer", f"To @{username}: ${amount}")
+        await message.reply(
+            f"✅ {message.from_user.first_name} → @{username}: ${amount:.2f}\n"
+            f"💰 Ваш баланс: ${db.get_balance(from_user):.2f}"
+        )
+    else:
+        await message.reply(f"❌ {result}")
+
+
+@router.message(F.chat.type != "private", F.text == "/лотерея")
+async def chat_lottery(message: Message):
+    user_id = message.from_user.id
+    balance = db.get_balance(user_id)
+
+    text = f"""🎰 <b>ЛОТЕРЕЯ</b>
+
+💰 Ваш баланс: ${balance:.2f}
+
+🎫 <b>Обычная:</b> $10
+   Шансы:
+   • 70% — проигрыш
+   • 25% — x1.5
+   • 4% — x3
+   • 1% — x10
+
+⭐ <b>Премиум:</b> 2⭐
+   Те же шансы, но оплата Stars!"""
+
+    keyboard = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="🎫 Играть ($10)", callback_data="lottery_regular"
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text="⭐ Премиум (2⭐)", callback_data="lottery_premium"
+                )
+            ],
+        ]
+    )
+
+    await message.reply(text, reply_markup=keyboard)
+
+
+@router.callback_query(F.data.in_(["lottery_regular", "lottery_premium"]))
+async def lottery_play(callback: CallbackQuery):
+    user_id = callback.from_user.id
+    is_premium = callback.data == "lottery_premium"
+
+    result = db.play_lottery(user_id, callback.message.chat.id, is_premium)
+
+    if not result["won"] and result["won_amount"] == 0:
+        # Проигрыш
+        await callback.message.edit_text(
+            result["message"],
+            reply_markup=InlineKeyboardMarkup(
+                inline_keyboard=[
+                    [
+                        InlineKeyboardButton(
+                            text="🔄 Ещё раз", callback_data=callback.data
+                        )
+                    ],
+                    [
+                        InlineKeyboardButton(
+                            text="❌ Закрыть", callback_data="lottery_close"
+                        )
+                    ],
+                ]
+            ),
+        )
+    else:
+        # Выигрыш!
+        await callback.message.edit_text(
+            f"{result['message']}\n\n💰 Баланс: ${db.get_balance(user_id):.2f}",
+            reply_markup=InlineKeyboardMarkup(
+                inline_keyboard=[
+                    [
+                        InlineKeyboardButton(
+                            text="🎰 Ещё раз!", callback_data=callback.data
+                        )
+                    ],
+                    [
+                        InlineKeyboardButton(
+                            text="❌ Закрыть", callback_data="lottery_close"
+                        )
+                    ],
+                ]
+            ),
+        )
+
+    await callback.answer()
+
+
+@router.callback_query(F.data == "lottery_close")
+async def lottery_close(callback: CallbackQuery):
+    await callback.message.delete()
+    await callback.answer()
+
+
+# ==================== АВТОМАТИЧЕСКОЕ ДОБАВЛЕНИЕ В ЧАТ ====================
+
+
+@router.message(F.chat.type != "private")
+async def auto_join_chat(message: Message):
+    """Автоматически добавляет пользователя в чат при первом сообщении"""
+    chat_id = message.chat.id
+    user_id = message.from_user.id
+
+    db.create_or_update_chat(chat_id, message.chat.type, message.chat.title)
+    db.add_user_to_chat(chat_id, user_id)
+
+    # Добавляем XP за использование команды
+    db.add_chat_xp(chat_id, config.XP_PER_COMMAND)
+
+    # Логирование
+    db.log_action(user_id, "chat_command", f"Used command in chat {chat_id}")
+
+
+# ==================== ОБРАБОТКА ДОБАВЛЕНИЯ БОТА В ЧАТ ====================
+
+
+@router.message(F.new_chat_members)
+async def bot_added_to_chat(message: Message, bot: Bot):
+    """Обработка когда бота добавляют в чат"""
+    chat_id = message.chat.id
+    bot_user_id = (await bot.get_me()).id
+
+    # Проверяем что бота добавили
+    for member in message.new_chat_members:
+        if member.id == bot_user_id:
+            # Бота добавили в чат
+            added_by = message.from_user.id if message.from_user else None
+
+            # Сохраняем чат
+            db.create_or_update_chat(
+                chat_id, message.chat.type, message.chat.title, added_by
+            )
+
+            # Проверяем права администратора
+            try:
+                member_status = await bot.get_chat_member(chat_id, bot_user_id)
+                is_admin = member_status.status in ["administrator", "creator"]
+            except:
+                is_admin = False
+
+            admin_msg = ""
+            if not is_admin:
+                admin_msg = "\n\n⚠️ <b>Дайте боту права администратора для корректной работы!</b>"
+
+            # Выдаём бонус за добавление (только если первый раз)
+            bonus_msg = ""
+            if not db.has_claimed_bonus(chat_id) and added_by:
+                db.claim_chat_bonus(chat_id)
+                EnergyService.add_energy(added_by, config.ADD_BOT_ENERGY_BONUS)
+                db.add_item(added_by, "lottery_ticket", config.ADD_BOT_LOTTERY_TICKET)
+                bonus_msg = f"\n\n🎁 <b>Бонус за добавление!</b>\n⚡ +{config.ADD_BOT_ENERGY_BONUS} энергии\n🎫 +{config.ADD_BOT_LOTTERY_TICKET} билет джекпота"
+
+            welcome = f"""👋 <b>Бот активирован!</b>
+
+📊 Уровень чата: 1
+💡 Используйте команды:
+• /мой_баланс
+• /рынок
+• /лотерея
+• /уровень_чата{admin_msg}{bonus_msg}"""
+
+            await message.answer(welcome)
+
+            # Логирование
+            if added_by:
+                db.log_action(added_by, "chat_added", f"Added bot to chat {chat_id}")
+
+
+# ==================== КОМАНДЫ ЧАТА ====================
+
+
+@router.message(F.chat.type != "private", F.text == "/уровень_чата")
+async def chat_level(message: Message):
+    """Показать уровень чата"""
+    chat_id = message.chat.id
+    chat = db.get_chat(chat_id)
+
+    if not chat:
+        await message.reply("❌ Этот чат не зарегистрирован!")
+        return
+
+    level = chat["level"]
+    xp = chat["xp"]
+    xp_needed = db.get_xp_needed_for_level(level)
+    progress = (xp / xp_needed) * 100 if xp_needed > 0 else 0
+
+    # Получаем бонусы уровня
+    bonuses = db.get_chat_bonus(chat_id)
+
+    bonuses_text = ""
+    if level >= 2:
+        bonuses_text += f"\n• Level 2: +5% доход"
+    if level >= 3:
+        bonuses_text += f"\n• Level 3: +1 бесплатный билет/день"
+    if level >= 4:
+        bonuses_text += f"\n• Level 4: -10% расход энергии"
+    if level >= 5:
+        bonuses_text += f"\n• Level 5: +10% шанс в джекпоте"
+
+    text = f"""🏆 <b>Уровень чата</b>
+
+📊 Уровень: {level}
+⭐ XP: {xp}/{xp_needed}
+📈 Прогресс: {progress:.1f}%
+
+💡 Бонусы:{bonuses_text or "\n• Пока нет бонусов"}"""
+
+    await message.reply(text)
+
+
+@router.message(F.chat.type != "private", F.text == "/топ_чаты")
+async def top_chats(message: Message):
+    """Показать топ чатов"""
+    chats = db.get_top_chats(10)
+
+    if not chats:
+        await message.reply("❌ Нет зарегистрированных чатов!")
+        return
+
+    text = "🏆 <b>ТОП-10 ЧАТОВ</b>\n\n"
+
+    medals = ["🥇", "🥈", "🥉"]
+    for i, chat in enumerate(chats, 1):
+        medal = medals[i - 1] if i <= 3 else f"{i}."
+        title = chat["title"] or f"Chat {chat['chat_id']}"
+        text += f"{medal} {title}\n   📊 Level {chat['level']} ({chat['xp']} XP)\n"
+
+    await message.reply(text)
+
+
+@router.message(F.chat.type != "private", F.text == "/джекпот")
+async def jackpot_info(message: Message):
+    """Информация о джекпоте"""
+    user_id = message.from_user.id
+    tickets = db.get_item(user_id, "lottery_ticket")
+
+    text = f"""🎰 <b>ДЖЕКПОТ</b>
+
+🎫 Ваши билеты: {tickets}
+
+💡 Используйте билеты для участия в джекпоте!
+⏰ Джекпот разыгрывается автоматически каждый час."""
+
+    keyboard = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="🎫 Купить билет (5⭐)", callback_data="buy_jackpot_ticket"
+                )
+            ]
+        ]
+    )
+
+    await message.reply(text, reply_markup=keyboard)
+
+
+# ==================== TELEGRAM STARS ПЛАТЕЖИ ====================
+
+
+@router.callback_query(F.data.startswith("buy_"))
+async def buy_with_stars(callback: CallbackQuery):
+    """Обработка покупки за Stars"""
+    user_id = callback.from_user.id
+    item = callback.data.replace("buy_", "")
+
+    items_config = {
+        "energy_20": {
+            "name": "⚡ +20 Энергии",
+            "stars": 5,
+            "action": lambda: EnergyService.add_energy(user_id, 20),
+        },
+        "energy_50": {
+            "name": "🔥 +50 Энергии",
+            "stars": 10,
+            "action": lambda: EnergyService.add_energy(user_id, 50),
+        },
+        "jackpot_ticket": {
+            "name": "🎫 Билет джекпота",
+            "stars": 5,
+            "action": lambda: db.add_item(user_id, "lottery_ticket", 1),
+        },
+        "xp_boost": {
+            "name": "📈 Буст XP чата (+100)",
+            "stars": 10,
+            "action": None,
+        },  # Требует chat_id
+    }
+
+    if item not in items_config:
+        await callback.answer("❌ Неизвестный товар!", show_alert=True)
+        return
+
+    item_config = items_config[item]
+    stars = item_config["stars"]
+
+    # Создаём платёж
+    payment_id = db.create_payment(user_id, item, stars)
+
+    # TODO: Реальная интеграция с Telegram Stars через sendInvoice
+    # Пока демо - сразу начисляем
+    item_config["action"]() if item_config["action"] else None
+    db.complete_payment(payment_id)
+
+    await callback.message.edit_text(
+        f"✅ <b>Покупка завершена!</b>\n\n"
+        f"📦 {item_config['name']}\n"
+        f"⭐ Потрачено: {stars}⭐",
+        reply_markup=get_main_menu(),
+    )
+    await callback.answer("✅ Покупка успешна!", show_alert=True)
+
+
+# ==================== ОБРАБОТКА ПЛАТЕЖЕЙ STARS ====================
+
+
+@router.pre_checkout_query()
+async def pre_checkout(pre_checkout: PreCheckoutQuery):
+    """Обработка предварительного запроса на оплату"""
+    # Принимаем все платежи
+    await pre_checkout.answer(ok=True)
+
+
+@router.message(F.successful_payment)
+async def successful_payment(message: Message):
+    """Обработка успешного платежа"""
+    user_id = message.from_user.id
+    payment = message.successful_payment
+
+    # Получаем provider_token из платежа
+    invoice_payload = payment.invoice_payload
+
+    # Находим платёж в БД
+    # TODO: Реализовать поиск по invoice_payload
+
+    await message.answer("✅ <b>Оплата прошла успешно!</b>\n\n⭐ Спасибо за покупку!")
+
+    # Логирование
+    db.log_action(user_id, "stars_payment", f"Payment: {invoice_payload}")
+
+
+# ==================== КНОПКА ДОБАВЛЕНИЯ В ЧАТ ====================
+
+
+def get_add_to_chat_button(bot_username: str) -> InlineKeyboardMarkup:
+    """Кнопка для добавления бота в чат"""
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="➕ Добавить бота в чат",
+                    url=f"https://t.me/{bot_username}?startgroup=true",
+                )
+            ]
+        ]
+    )
