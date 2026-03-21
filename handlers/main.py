@@ -4,6 +4,7 @@ Production handlers для бота "Микрокапитализм: Жизнь 
 """
 
 import re
+import uuid
 import logging
 from aiogram import Router, F
 from aiogram.filters import Command, CommandStart
@@ -12,14 +13,12 @@ from aiogram.types import (
     InlineKeyboardMarkup,
     InlineKeyboardButton,
     CallbackQuery,
-    BotCommand,
-    BotCommandScopeChat,
-    Update,
     PreCheckoutQuery,
     SuccessfulPayment,
-    ChatMemberUpdated,
+    LabeledPrice,
+    InlineKeyboardButton,
 )
-from aiogram.enums import ParseMode
+from aiogram.enums import ParseMode, ShippingRateType, Currency
 from aiogram.client.bot import Bot
 
 from config import config
@@ -28,6 +27,9 @@ from services import EnergyService, MarketService, EventService
 
 logger = logging.getLogger(__name__)
 router = Router()
+
+# Провайдер токена для Telegram Stars (пустой для Stars)
+TELEGRAM_STARS_PROVIDER_TOKEN = ""
 
 
 # ==================== КЛАВИАТУРЫ ====================
@@ -119,19 +121,24 @@ def get_shop_menu() -> InlineKeyboardMarkup:
             ],
             [
                 InlineKeyboardButton(
-                    text=f"⚡ Буст x2 ({config.BOOST_1H_COST}⭐)",
-                    callback_data="buy_boost",
+                    text=f"⚡ +20 Энергии (5⭐)", callback_data="buy_energy_20"
                 )
             ],
             [
                 InlineKeyboardButton(
-                    text=f"🛡️ Щит ({config.SHIELD_COST}⭐)", callback_data="buy_shield"
+                    text=f"🔥 +50 Энергии (10⭐)", callback_data="buy_energy_50"
                 )
             ],
             [
                 InlineKeyboardButton(
-                    text=f"🔮 Инсайдер ({config.INSIDER_COST}⭐)",
-                    callback_data="buy_insider",
+                    text=f"⚡ Буст x2 (10⭐)", callback_data="buy_boost_1h"
+                )
+            ],
+            [InlineKeyboardButton(text=f"🛡️ Щит (5⭐)", callback_data="buy_shield")],
+            [
+                InlineKeyboardButton(
+                    text=f"🎰 Лотерея Премиум (2⭐)",
+                    callback_data="buy_lottery_premium",
                 )
             ],
             [InlineKeyboardButton(text="🔙 Назад", callback_data="menu_main")],
@@ -468,54 +475,37 @@ async def buy_vip(callback: CallbackQuery):
         await callback.answer("⭐ VIP уже активен!", show_alert=True)
         return
 
-    # TODO: Telegram Stars интеграция
-    db.set_vip(user_id, config.VIP_DURATION_DAYS)
-
-    await callback.message.edit_text(
-        f"⭐ <b>VIP активирован!</b>\n\n"
-        f"⏱️ На {config.VIP_DURATION_DAYS} дней\n"
-        f"📈 +{config.VIP_PRODUCTION_BONUS * 100}% к производству\n"
-        f"⚡ -{config.VIP_ENERGY_DISCOUNT * 100}% к расходу энергии",
-        reply_markup=get_shop_menu(),
+    # TODO: VIP за Stars - требует ручной обработки через Stars
+    # Для VIP используем отдельную систему
+    await callback.answer(
+        "💳 VIP покупается через Stars. Скоро будет доступно!", show_alert=True
     )
-    await callback.answer("✅ VIP активирован!", show_alert=True)
 
 
-@router.callback_query(F.data == "buy_boost")
-async def buy_boost(callback: CallbackQuery):
-    user_id = callback.from_user.id
-
-    # TODO: Telegram Stars интеграция
-    db.set_boost(user_id, 1)
-
-    await callback.message.edit_text(
-        "⚡ <b>Буст активирован!</b>\n\n📈 x2 к производству на 1 час",
-        reply_markup=get_shop_menu(),
-    )
-    await callback.answer("✅ Буст активен!", show_alert=True)
+@router.callback_query(F.data == "buy_boost_1h")
+async def buy_boost(callback: CallbackQuery, bot: Bot):
+    """Покупка буста за Stars"""
+    success = await send_invoice_to_user(bot, callback.from_user.id, "boost_1h")
+    if success:
+        await callback.answer("💳 Отправляю счёт...", show_alert=True)
+    else:
+        await callback.answer("❌ Ошибка!", show_alert=True)
 
 
 @router.callback_query(F.data == "buy_shield")
-async def buy_shield(callback: CallbackQuery):
-    user_id = callback.from_user.id
-
-    # TODO: Telegram Stars интеграция
-    db.add_item(user_id, "shield", 1)
-    shields = db.get_item(user_id, "shield")
-
-    await callback.message.edit_text(
-        f"🛡️ <b>Щит куплен!</b>\n\n🛡️ Количество: {shields}", reply_markup=get_shop_menu()
-    )
-    await callback.answer("🛡️ Щит куплен!", show_alert=True)
+async def buy_shield(callback: CallbackQuery, bot: Bot):
+    """Покупка щита за Stars"""
+    success = await send_invoice_to_user(bot, callback.from_user.id, "shield")
+    if success:
+        await callback.answer("💳 Отправляю счёт...", show_alert=True)
+    else:
+        await callback.answer("❌ Ошибка!", show_alert=True)
 
 
 @router.callback_query(F.data == "buy_insider")
 async def buy_insider(callback: CallbackQuery):
-    user_id = callback.from_user.id
-
-    # TODO: Telegram Stars интеграция
+    """Показать информацию о инсайдере"""
     preview = EventService.get_next_event_preview()
-
     await callback.message.edit_text(preview, reply_markup=get_shop_menu())
     await callback.answer("🔮 Инсайдерская информация!", show_alert=True)
 
@@ -524,27 +514,23 @@ async def buy_insider(callback: CallbackQuery):
 
 
 @router.callback_query(F.data == "buy_energy_20")
-async def buy_energy_20(callback: CallbackQuery):
-    user_id = callback.from_user.id
-
-    # TODO: Telegram Stars интеграция
-    EnergyService.add_energy(user_id, 20)
-    energy = EnergyService.get_user_energy_status(user_id)
-
-    await callback.message.edit_text(
-        f"⚡ <b>Энергия восстановлена!</b>\n\n"
-        f"⚡ {energy['current']:.0f}/{energy['max']}",
-        reply_markup=get_main_menu(),
-    )
-    await callback.answer("✅ +20 энергии!", show_alert=True)
+async def buy_energy_20(callback: CallbackQuery, bot: Bot):
+    """Покупка энергии за Stars"""
+    success = await send_invoice_to_user(bot, callback.from_user.id, "energy_20")
+    if success:
+        await callback.answer("💳 Отправляю счёт...", show_alert=True)
+    else:
+        await callback.answer("❌ Ошибка!", show_alert=True)
 
 
 @router.callback_query(F.data == "buy_energy_50")
-async def buy_energy_50(callback: CallbackQuery):
-    user_id = callback.from_user.id
-
-    # TODO: Telegram Stars интеграция
-    EnergyService.add_energy(user_id, 50)
+async def buy_energy_50(callback: CallbackQuery, bot: Bot):
+    """Покупка энергии за Stars"""
+    success = await send_invoice_to_user(bot, callback.from_user.id, "energy_50")
+    if success:
+        await callback.answer("💳 Отправляю счёт...", show_alert=True)
+    else:
+        await callback.answer("❌ Ошибка!", show_alert=True)
     energy = EnergyService.get_user_energy_status(user_id)
 
     await callback.message.edit_text(
@@ -873,6 +859,26 @@ async def lottery_close(callback: CallbackQuery):
     await callback.answer()
 
 
+@router.callback_query(F.data == "buy_lottery_premium")
+async def buy_lottery_premium(callback: CallbackQuery, bot: Bot):
+    """Покупка премиум лотереи за Stars"""
+    success = await send_invoice_to_user(bot, callback.from_user.id, "lottery_premium")
+    if success:
+        await callback.answer("💳 Отправляю счёт...", show_alert=True)
+    else:
+        await callback.answer("❌ Ошибка!", show_alert=True)
+
+
+@router.callback_query(F.data == "buy_jackpot_ticket")
+async def buy_jackpot_ticket(callback: CallbackQuery, bot: Bot):
+    """Покупка билета джекпота за Stars"""
+    success = await send_invoice_to_user(bot, callback.from_user.id, "jackpot_ticket")
+    if success:
+        await callback.answer("💳 Отправляю счёт...", show_alert=True)
+    else:
+        await callback.answer("❌ Ошибка!", show_alert=True)
+
+
 # ==================== АВТОМАТИЧЕСКОЕ ДОБАВЛЕНИЕ В ЧАТ ====================
 
 
@@ -1037,58 +1043,100 @@ async def jackpot_info(message: Message):
 
 # ==================== TELEGRAM STARS ПЛАТЕЖИ ====================
 
+# Конфигурация товаров для покупки
+ITEMS_CONFIG = {
+    "energy_20": {
+        "name": "⚡ +20 Энергии",
+        "stars": 5,
+        "description": "Мгновенное восстановление 20 единиц энергии",
+    },
+    "energy_50": {
+        "name": "🔥 +50 Энергии",
+        "stars": 10,
+        "description": "Мгновенное восстановление 50 единиц энергии",
+    },
+    "boost_1h": {
+        "name": "⚡ Буст x2 (1 час)",
+        "stars": 10,
+        "description": "Удвоение производства на 1 час",
+    },
+    "shield": {
+        "name": "🛡️ Щит",
+        "stars": 5,
+        "description": "Защита от одного негативного события",
+    },
+    "lottery_premium": {
+        "name": "🎰 Лотерея Премиум",
+        "stars": 2,
+        "description": "Билет в премиум лотерею с x10 джекпотом",
+    },
+    "xp_boost_chat": {
+        "name": "📈 Буст XP чата (+100)",
+        "stars": 10,
+        "description": "Добавить 100 XP текущему чату",
+    },
+}
+
+
+async def send_invoice_to_user(
+    bot: Bot,
+    user_id: int,
+    item_key: str,
+    chat_id: int = None,
+):
+    """Отправить инвойс пользователю через Telegram Stars"""
+    if item_key not in ITEMS_CONFIG:
+        return False
+
+    item = ITEMS_CONFIG[item_key]
+
+    # Генерируем уникальный payload
+    payload = f"{item_key}_{user_id}_{chat_id or 0}_{uuid.uuid4().hex[:8]}"
+
+    # Создаём запись в БД
+    payment_id = db.create_payment(user_id, item_key, item["stars"], chat_id)
+
+    try:
+        await bot.send_invoice(
+            chat_id=user_id,
+            title=item["name"],
+            description=item["description"],
+            payload=payload,
+            provider_token=TELEGRAM_STARS_PROVIDER_TOKEN,
+            currency=Currency.XTR,  # Telegram Stars
+            prices=[LabeledPrice(label=item["name"], amount=item["stars"])],
+        )
+        return True
+    except Exception as e:
+        logger.error(f"Failed to send invoice: {e}")
+        return False
+
 
 @router.callback_query(F.data.startswith("buy_"))
-async def buy_with_stars(callback: CallbackQuery):
-    """Обработка покупки за Stars"""
+async def buy_with_stars(callback: CallbackQuery, bot: Bot):
+    """Обработка кнопки покупки - отправка инвойса"""
     user_id = callback.from_user.id
-    item = callback.data.replace("buy_", "")
+    item_key = callback.data.replace("buy_", "")
 
-    items_config = {
-        "energy_20": {
-            "name": "⚡ +20 Энергии",
-            "stars": 5,
-            "action": lambda: EnergyService.add_energy(user_id, 20),
-        },
-        "energy_50": {
-            "name": "🔥 +50 Энергии",
-            "stars": 10,
-            "action": lambda: EnergyService.add_energy(user_id, 50),
-        },
-        "jackpot_ticket": {
-            "name": "🎫 Билет джекпота",
-            "stars": 5,
-            "action": lambda: db.add_item(user_id, "lottery_ticket", 1),
-        },
-        "xp_boost": {
-            "name": "📈 Буст XP чата (+100)",
-            "stars": 10,
-            "action": None,
-        },  # Требует chat_id
-    }
-
-    if item not in items_config:
+    if item_key not in ITEMS_CONFIG:
         await callback.answer("❌ Неизвестный товар!", show_alert=True)
         return
 
-    item_config = items_config[item]
-    stars = item_config["stars"]
+    # Для XP буста нужен chat_id
+    chat_id = None
+    if item_key == "xp_boost_chat":
+        if callback.message.chat.type == "private":
+            await callback.answer("❌ Эта покупка только в чатах!", show_alert=True)
+            return
+        chat_id = callback.message.chat.id
 
-    # Создаём платёж
-    payment_id = db.create_payment(user_id, item, stars)
+    # Отправляем инвойс
+    success = await send_invoice_to_user(bot, user_id, item_key, chat_id)
 
-    # TODO: Реальная интеграция с Telegram Stars через sendInvoice
-    # Пока демо - сразу начисляем
-    item_config["action"]() if item_config["action"] else None
-    db.complete_payment(payment_id)
-
-    await callback.message.edit_text(
-        f"✅ <b>Покупка завершена!</b>\n\n"
-        f"📦 {item_config['name']}\n"
-        f"⭐ Потрачено: {stars}⭐",
-        reply_markup=get_main_menu(),
-    )
-    await callback.answer("✅ Покупка успешна!", show_alert=True)
+    if success:
+        await callback.answer("💳 Отправляю счёт для оплаты...", show_alert=True)
+    else:
+        await callback.answer("❌ Ошибка отправки счёта!", show_alert=True)
 
 
 # ==================== ОБРАБОТКА ПЛАТЕЖЕЙ STARS ====================
@@ -1097,26 +1145,66 @@ async def buy_with_stars(callback: CallbackQuery):
 @router.pre_checkout_query()
 async def pre_checkout(pre_checkout: PreCheckoutQuery):
     """Обработка предварительного запроса на оплату"""
-    # Принимаем все платежи
+    # Принимаем платёж
     await pre_checkout.answer(ok=True)
+
+
+async def process_successful_payment(user_id: int, item_key: str, chat_id: int = None):
+    """Обработка успешного платежа - начисление товара"""
+    item = ITEMS_CONFIG.get(item_key)
+    if not item:
+        return False
+
+    # Начисляем товар в зависимости от типа
+    if item_key == "energy_20":
+        EnergyService.add_energy(user_id, 20)
+    elif item_key == "energy_50":
+        EnergyService.add_energy(user_id, 50)
+    elif item_key == "boost_1h":
+        db.set_boost(user_id, 1)
+    elif item_key == "shield":
+        db.add_item(user_id, "shield", 1)
+    elif item_key == "lottery_premium":
+        db.add_item(user_id, "lottery_premium_ticket", 1)
+    elif item_key == "xp_boost_chat" and chat_id:
+        db.add_chat_xp(chat_id, 100)
+
+    # Логирование
+    db.log_action(
+        user_id,
+        "stars_payment_completed",
+        f"Item: {item_key}, Stars: {item['stars']}, Chat: {chat_id}",
+    )
+
+    return True
 
 
 @router.message(F.successful_payment)
 async def successful_payment(message: Message):
-    """Обработка успешного платежа"""
+    """Обработка успешного платежа Telegram Stars"""
     user_id = message.from_user.id
     payment = message.successful_payment
 
-    # Получаем provider_token из платежа
-    invoice_payload = payment.invoice_payload
+    # Парсим payload
+    payload = payment.invoice_payload
+    parts = payload.split("_")
+    item_key = parts[0] if parts else None
+    chat_id = int(parts[2]) if len(parts) > 2 and parts[2].isdigit() else None
 
-    # Находим платёж в БД
-    # TODO: Реализовать поиск по invoice_payload
+    item = ITEMS_CONFIG.get(item_key, {})
 
-    await message.answer("✅ <b>Оплата прошла успешно!</b>\n\n⭐ Спасибо за покупку!")
+    # Обрабатываем платёж
+    await process_successful_payment(user_id, item_key, chat_id)
 
-    # Логирование
-    db.log_action(user_id, "stars_payment", f"Payment: {invoice_payload}")
+    # Формируем сообщение о的成功
+    success_message = f"""✅ <b>Оплата прошла успешно!</b>
+
+⭐ Потрачено: {item.get("stars", "?")}⭐
+📦 Получено: {item.get("name", "Товар")}
+
+💪 Спасибо за покупку!"""
+
+    await message.answer(success_message)
 
 
 # ==================== КНОПКА ДОБАВЛЕНИЯ В ЧАТ ====================
