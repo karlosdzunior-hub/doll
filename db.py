@@ -148,6 +148,8 @@ class Database:
                 level INTEGER DEFAULT 1,
                 xp INTEGER DEFAULT 0,
                 bonus_claimed INTEGER DEFAULT 0,
+                vip_status INTEGER DEFAULT 0,
+                vip_expire DATETIME,
                 created_at DATETIME DEFAULT CURRENT_TIMESTAMP
             )""")
 
@@ -1090,6 +1092,8 @@ class Database:
                 """,
                     (new_xp - xp_needed, new_level, chat_id),
                 )
+            # Выдаём награду всем участникам чата
+            self.reward_chat_users(chat_id, config.CHAT_LEVEL_UP_ENERGY_BONUS)
             return True, True, new_level
 
         with self.get_connection() as conn:
@@ -1202,6 +1206,61 @@ class Database:
                 .execute("SELECT * FROM payments WHERE id = ?", (payment_id,))
                 .fetchone()
             )
+
+    def set_chat_vip(self, chat_id: int, days: int = 7) -> bool:
+        """Установить VIP статус для чата"""
+        try:
+            with self.get_connection() as conn:
+                from datetime import datetime, timedelta
+                expire = datetime.now() + timedelta(days=days)
+                conn.cursor().execute(
+                    "UPDATE chats SET vip_status = 1, vip_expire = ? WHERE chat_id = ?",
+                    (expire, chat_id),
+                )
+                return True
+        except Exception as e:
+            print(f"Error setting chat VIP: {e}")
+            return False
+
+    def is_chat_vip(self, chat_id: int) -> bool:
+        """Проверить является ли чат VIP"""
+        chat = self.get_chat(chat_id)
+        if not chat or not chat["vip_status"]:
+            return False
+        if chat["vip_expire"]:
+            from datetime import datetime
+            return datetime.fromisoformat(chat["vip_expire"]) > datetime.now()
+        return False
+
+    def get_chat_vip_bonus(self, chat_id: int) -> dict:
+        """Получить VIP бонусы чата"""
+        if self.is_chat_vip(chat_id):
+            return {
+                "xp_bonus": 0.10,  # +10% к получению XP
+                "income_bonus": 0.05,  # +5% к доходу
+            }
+        return {
+            "xp_bonus": 0,
+            "income_bonus": 0,
+        }
+
+    def get_chat_users(self, chat_id: int) -> List[sqlite3.Row]:
+        """Получить всех пользователей чата"""
+        with self.get_connection() as conn:
+            return (
+                conn.cursor()
+                .execute("SELECT user_id FROM chat_users WHERE chat_id = ?", (chat_id,))
+                .fetchall()
+            )
+
+    def reward_chat_users(self, chat_id: int, energy_bonus: int):
+        """Выдать награду всем пользователям чата"""
+        from services.energy import EnergyService
+        
+        users = self.get_chat_users(chat_id)
+        for user_row in users:
+            user_id = user_row["user_id"]
+            EnergyService.add_energy(user_id, energy_bonus)
 
 
 db = Database()
