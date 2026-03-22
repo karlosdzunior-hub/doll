@@ -244,7 +244,13 @@ async def cmd_start(message: Message):
 @router.callback_query(F.data == "menu_balance")
 async def menu_balance(callback: CallbackQuery):
     user_id = callback.from_user.id
+    username = callback.from_user.username or callback.from_user.first_name
+    db.create_user(user_id, username)
     user = db.get_user(user_id)
+
+    if not user:
+        await callback.answer("❌ Сначала напишите /start боту в личных сообщениях!", show_alert=True)
+        return
 
     balance = user["balance"]
     energy_status = EnergyService.get_user_energy_status(user_id)
@@ -612,89 +618,6 @@ https://t.me/{bot_username}?start={user_id}
     await callback.answer()
 
 
-# ==================== ЧАТ-КОМАНДЫ ====================
-
-
-@router.message(F.chat.type != "private", F.text.startswith("/мой_баланс"))
-async def chat_balance(message: Message):
-    user_id = message.from_user.id
-    balance = db.get_balance(user_id)
-    energy, max_e = db.get_energy(user_id)
-
-    bar = EnergyService.get_energy_bar(energy, max_e)
-    await message.reply(
-        f"💰 {message.from_user.first_name}: ${balance:.2f}\n{bar} ⚡{energy:.0f}/{max_e}"
-    )
-
-
-@router.message(F.chat.type != "private", F.text.startswith("/мой_бизнес"))
-async def chat_business(message: Message):
-    user_id = message.from_user.id
-    businesses = db.get_user_businesses(user_id)
-
-    if not businesses:
-        await message.reply("🏢 У вас нет бизнесов!")
-        return
-
-    text = "🏢 <b>Ваши бизнесы:</b>\n"
-    for biz in businesses:
-        biz_config = config.BUSINESSES.get(biz["business_type"], {})
-        text += f"• {biz_config.get('name', biz['business_type'])} Ур.{biz['level']}\n"
-
-    await message.reply(text)
-
-
-@router.message(F.chat.type != "private", F.text.startswith("/рынок"))
-async def chat_market(message: Message):
-    text = MarketService.get_market_overview()
-    await message.reply(text)
-
-
-@router.message(F.chat.type != "private", F.text.startswith("/топ"))
-async def chat_top(message: Message):
-    leaders = db.get_leaderboard(5)
-    text = "🏆 <b>ТОП-5</b>\n"
-
-    for i, player in enumerate(leaders, 1):
-        text += f"{i}. ${player['balance']:.2f}\n"
-
-    await message.reply(text)
-
-
-@router.message(
-    F.chat.type != "private", F.text.regexp(r"^/отправить\s*@?(\w+)\s*(\d+(?:\.\d+)?)")
-)
-async def chat_transfer(message: Message):
-    match = re.match(r"^/отправить\s*@?(\w+)\s*(\d+(?:\.\d+)?)", message.text)
-    if not match:
-        await message.reply("❌ Формат: /отправить @username сумма")
-        return
-
-    username = match.group(1)
-    amount = float(match.group(2))
-
-    with db.get_connection() as conn:
-        cursor = conn.cursor()
-        cursor.execute("SELECT user_id FROM users WHERE username = ?", (username,))
-        row = cursor.fetchone()
-
-    if not row:
-        await message.reply(f"❌ Пользователь @{username} не найден")
-        return
-
-    to_user = row[0]
-    from_user = message.from_user.id
-
-    success, result = db.transfer_money(from_user, to_user, amount, message.chat.id)
-
-    if success:
-        await message.reply(
-            f"✅ {message.from_user.first_name} → @{username}: ${amount:.2f}"
-        )
-    else:
-        await message.reply(f"❌ {result}")
-
-
 # ==================== НАВИГАЦИЯ ====================
 
 
@@ -713,6 +636,8 @@ async def menu_main(callback: CallbackQuery):
 @router.message(F.chat.type != "private", F.text == "/мой_баланс")
 async def chat_balance(message: Message):
     user_id = message.from_user.id
+    username = message.from_user.username or message.from_user.first_name
+    db.create_user(user_id, username)
     balance = db.get_balance(user_id)
     energy, max_e = db.get_energy(user_id)
 
@@ -728,6 +653,8 @@ async def chat_balance(message: Message):
 @router.message(F.chat.type != "private", F.text == "/мой_бизнес")
 async def chat_business(message: Message):
     user_id = message.from_user.id
+    username = message.from_user.username or message.from_user.first_name
+    db.create_user(user_id, username)
     businesses = db.get_user_businesses(user_id)
 
     if not businesses:
@@ -763,6 +690,9 @@ async def chat_top(message: Message):
     F.chat.type != "private", F.text.regexp(r"^/отправить\s*@?(\w+)\s*(\d+(?:\.\d+)?)")
 )
 async def chat_transfer(message: Message):
+    user_id = message.from_user.id
+    username = message.from_user.username or message.from_user.first_name
+    db.create_user(user_id, username)
     match = re.match(r"^/отправить\s*@?(\w+)\s*(\d+(?:\.\d+)?)", message.text)
     if not match:
         await message.reply(
@@ -805,6 +735,8 @@ async def chat_transfer(message: Message):
 @router.message(F.chat.type != "private", F.text == "/лотерея")
 async def chat_lottery(message: Message):
     user_id = message.from_user.id
+    username = message.from_user.username or message.from_user.first_name
+    db.create_user(user_id, username)
     balance = db.get_balance(user_id)
 
     text = f"""🎰 <b>ЛОТЕРЕЯ</b>
@@ -920,16 +852,17 @@ async def buy_jackpot_ticket(callback: CallbackQuery, bot: Bot):
 @router.message(F.chat.type != "private")
 async def auto_join_chat(message: Message):
     """Автоматически добавляет пользователя в чат при первом сообщении"""
+    if not message.from_user:
+        return
     chat_id = message.chat.id
     user_id = message.from_user.id
+    username = message.from_user.username or message.from_user.first_name
 
+    db.create_user(user_id, username)
     db.create_or_update_chat(chat_id, message.chat.type, message.chat.title)
     db.add_user_to_chat(chat_id, user_id)
 
-    # Добавляем XP за использование команды
     db.add_chat_xp(chat_id, config.XP_PER_COMMAND)
-
-    # Логирование
     db.log_action(user_id, "chat_command", f"Used command in chat {chat_id}")
 
 
@@ -1166,7 +1099,7 @@ async def send_invoice_to_user(
             description=item["description"],
             payload=payload,
             provider_token=TELEGRAM_STARS_PROVIDER_TOKEN,
-            currency=Currency.XTR,  # Telegram Stars
+            currency="XTR",  # Telegram Stars
             prices=[LabeledPrice(label=item["name"], amount=item["stars"])],
         )
         return True
