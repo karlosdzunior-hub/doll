@@ -1040,36 +1040,55 @@ ITEMS_CONFIG = {
         "name": "⚡ +20 Энергии",
         "stars": 5,
         "description": "Мгновенное восстановление 20 единиц энергии",
+        "reward": "⚡ +20 энергии зачислено на твой аккаунт!",
     },
     "energy_50": {
         "name": "🔥 +50 Энергии",
         "stars": 10,
         "description": "Мгновенное восстановление 50 единиц энергии",
+        "reward": "🔥 +50 энергии зачислено на твой аккаунт!",
     },
     "boost_1h": {
         "name": "⚡ Буст x2 (1 час)",
         "stars": 10,
         "description": "Удвоение производства на 1 час",
+        "reward": "⚡ Буст x2 активирован! Производство удвоено на 1 час.",
     },
     "shield": {
         "name": "🛡️ Щит",
         "stars": 5,
         "description": "Защита от одного негативного события",
+        "reward": "🛡️ Щит активирован! Ты защищён от следующего негативного события.",
     },
     "lottery_premium": {
         "name": "🎰 Лотерея Премиум",
         "stars": 2,
         "description": "Билет в премиум лотерею с x10 джекпотом",
+        "reward": "🎰 Премиум билет добавлен! Используй /лотерея чтобы сыграть.",
+    },
+    "vip": {
+        "name": "⭐ VIP статус (7 дней)",
+        "stars": 50,
+        "description": "VIP статус на 7 дней: +20% к производству, -30% расход энергии",
+        "reward": "⭐ VIP статус активирован на 7 дней!\n+20% к производству\n-30% к расходу энергии",
     },
     "xp_boost_chat": {
         "name": "📈 Буст XP чата (+100)",
         "stars": 10,
         "description": "Добавить 100 XP текущему чату",
+        "reward": "📈 +100 XP добавлено текущему чату!",
     },
     "vip_chat": {
         "name": "⭐ VIP Чат (7 дней)",
         "stars": 50,
         "description": "VIP статус для чата на 7 дней с бонусами",
+        "reward": "⭐ VIP статус чата активирован на 7 дней!",
+    },
+    "jackpot_ticket": {
+        "name": "🎫 Билет Джекпота",
+        "stars": 5,
+        "description": "Билет для участия в часовом джекпоте",
+        "reward": "🎫 Билет джекпота получен! Жди розыгрыша каждый час.",
     },
 }
 
@@ -1086,8 +1105,8 @@ async def send_invoice_to_user(
 
     item = ITEMS_CONFIG[item_key]
 
-    # Генерируем уникальный payload
-    payload = f"{item_key}_{user_id}_{chat_id or 0}_{uuid.uuid4().hex[:8]}"
+    # Генерируем уникальный payload (разделитель | чтобы не конфликтовал с _ в ключах)
+    payload = f"{item_key}|{user_id}|{chat_id or 0}|{uuid.uuid4().hex[:8]}"
 
     # Создаём запись в БД
     payment_id = db.create_payment(user_id, item_key, item["stars"], chat_id)
@@ -1151,33 +1170,29 @@ async def process_successful_payment(user_id: int, item_key: str, chat_id: int =
     if not item:
         return False, None
 
-    message_text = ""
-
     # Начисляем товар в зависимости от типа
     if item_key == "energy_20":
         EnergyService.add_energy(user_id, 20)
-        message_text = "⚡ +20 энергии начислено!"
     elif item_key == "energy_50":
         EnergyService.add_energy(user_id, 50)
-        message_text = "🔥 +50 энергии начислено!"
     elif item_key == "boost_1h":
         db.set_boost(user_id, 1)
-        message_text = "⚡ Буст x2 активирован на 1 час!"
     elif item_key == "shield":
         db.add_item(user_id, "shield", 1)
-        message_text = "🛡️ Щит получен!"
     elif item_key == "lottery_premium":
         db.add_item(user_id, "lottery_premium_ticket", 1)
-        message_text = "🎰 Премиум билет получен!"
-    elif item_key == "xp_boost_chat" and chat_id:
-        success, leveled_up, new_level = db.add_chat_xp(chat_id, 100)
-        if leveled_up:
-            message_text = f"📈 Чат получил +100 XP и достиг уровня {new_level}!"
-        else:
-            message_text = "📈 Чат получил +100 XP!"
-    elif item_key == "vip_chat" and chat_id:
-        db.set_chat_vip(chat_id, 7)
-        message_text = "⭐ VIP статус чата активирован на 7 дней!"
+    elif item_key == "vip":
+        db.set_vip(user_id, config.VIP_DURATION_DAYS)
+    elif item_key == "jackpot_ticket":
+        db.add_item(user_id, "lottery_ticket", 1)
+    elif item_key == "xp_boost_chat":
+        if chat_id:
+            success, leveled_up, new_level = db.add_chat_xp(chat_id, 100)
+            if leveled_up:
+                return True, f"📈 Чат получил +100 XP и достиг уровня {new_level}!"
+    elif item_key == "vip_chat":
+        if chat_id:
+            db.set_chat_vip(chat_id, 7)
 
     # Логирование
     db.log_action(
@@ -1186,7 +1201,8 @@ async def process_successful_payment(user_id: int, item_key: str, chat_id: int =
         f"Item: {item_key}, Stars: {item['stars']}, Chat: {chat_id}",
     )
 
-    return True, message_text
+    # Возвращаем описание награды из конфига
+    return True, item.get("reward", "")
 
 
 @router.message(F.successful_payment)
@@ -1195,34 +1211,48 @@ async def successful_payment(message: Message):
     user_id = message.from_user.id
     payment = message.successful_payment
 
-    # Парсим payload
+    # Парсим payload (новый формат: item_key|user_id|chat_id|uuid)
     payload = payment.invoice_payload
-    parts = payload.split("_")
-    item_key = parts[0] if parts else None
-    chat_id = int(parts[2]) if len(parts) > 2 and parts[2].isdigit() else None
+    if "|" in payload:
+        parts = payload.split("|")
+        item_key = parts[0] if parts else None
+        chat_id_raw = parts[2] if len(parts) > 2 else "0"
+        chat_id = int(chat_id_raw) if chat_id_raw.lstrip("-").isdigit() and chat_id_raw != "0" else None
+    else:
+        # Обратная совместимость: старый формат item_key_userid_chatid_uuid
+        # Ищем ключ товара по совпадению с началом payload
+        item_key = None
+        for key in ITEMS_CONFIG:
+            if payload.startswith(key + "_"):
+                item_key = key
+                break
+        rest = payload[len(item_key) + 1:].split("_") if item_key else []
+        chat_id_raw = rest[1] if len(rest) > 1 else "0"
+        chat_id = int(chat_id_raw) if chat_id_raw.lstrip("-").isdigit() and chat_id_raw != "0" else None
 
     item = ITEMS_CONFIG.get(item_key, {})
 
-    # Обрабатываем платёж
-    success, message_text = await process_successful_payment(user_id, item_key, chat_id, message.bot)
+    # Обрабатываем платёж и начисляем товар
+    success, reward_text = await process_successful_payment(user_id, item_key, chat_id, message.bot)
 
-    # Формируем сообщение об успехе
-    if success and message_text:
-        success_message = f"""✅ <b>Оплата прошла успешно!</b>
+    item_name = item.get("name", "Товар")
+    item_stars = item.get("stars", payment.total_amount)
 
-⭐ Потрачено: {item.get("stars", "?")}⭐
-📦 Получено: {item.get("name", "Товар")}
-
-{message_text}
-
-💪 Спасибо за покупку!"""
+    if success and reward_text:
+        success_message = (
+            f"✅ <b>Оплата прошла успешно!</b>\n\n"
+            f"⭐ Потрачено: {item_stars}⭐\n"
+            f"📦 Получено: {item_name}\n\n"
+            f"{reward_text}\n\n"
+            f"💪 Спасибо за покупку!"
+        )
     else:
-        success_message = f"""✅ <b>Оплата прошла успешно!</b>
-
-⭐ Потрачено: {item.get("stars", "?")}⭐
-📦 Получено: {item.get("name", "Товар")}
-
-💪 Спасибо за покупку!"""
+        success_message = (
+            f"✅ <b>Оплата прошла успешно!</b>\n\n"
+            f"⭐ Потрачено: {item_stars}⭐\n"
+            f"📦 Получено: {item_name}\n\n"
+            f"💪 Спасибо за покупку!"
+        )
 
     await message.answer(success_message)
 
