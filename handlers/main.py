@@ -18,7 +18,7 @@ from aiogram.types import (
     LabeledPrice,
     InlineKeyboardButton,
 )
-from aiogram.enums import ParseMode, ShippingRateType, Currency
+from aiogram.enums import ParseMode, Currency
 from aiogram.client.bot import Bot
 
 from config import config
