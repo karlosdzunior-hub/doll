@@ -33,10 +33,46 @@ dp.include_router(router)
 shutdown_event = asyncio.Event()
 
 
+def process_production_tick():
+    """
+    Начисление ресурсов от бизнесов каждые 5 минут.
+    Бизнесы работают только если энергия >= MIN_ENERGY_TO_WORK.
+    """
+    from db import db as _db
+
+    users = _db.get_all_users_energy()
+    total_users = 0
+    total_resources = 0
+
+    for user_data in users:
+        user_id = user_data["user_id"]
+        energy = user_data["energy"]
+
+        # Бизнесы работают только при достаточной энергии
+        if energy < config.MIN_ENERGY_TO_WORK:
+            continue
+
+        production = _db.get_total_production(user_id)
+        if not production:
+            continue
+
+        # Производство за 5 минут = ставка_в_час / 12
+        for resource_type, rate_per_hour in production.items():
+            amount = rate_per_hour / 12
+            if amount > 0:
+                _db.update_user_resource(user_id, resource_type, amount)
+                total_resources += amount
+
+        total_users += 1
+
+    return {"users_produced": total_users, "total_resources": round(total_resources, 2)}
+
+
 async def background_tasks():
     """
     Фоновые задачи:
     - Обновление энергии каждые 5 минут
+    - Начисление ресурсов от бизнесов каждые 5 минут
     - Обновление рынка + NPC
     - Случайные события
     """
@@ -62,11 +98,18 @@ async def background_tasks():
                 f"{energy_stats['out_of_energy']} с 0 энергии"
             )
 
-            # 2. Обновление рынка + NPC
+            # 2. Начисление ресурсов от бизнесов
+            prod_stats = process_production_tick()
+            logger.info(
+                f"🏭 Производство: {prod_stats['users_produced']} игроков, "
+                f"+{prod_stats['total_resources']} ресурсов"
+            )
+
+            # 3. Обновление рынка + NPC
             market_stats = MarketService.process_market_tick()
             logger.info(f"📊 Рынок: NPC совершил {market_stats['npc_trades']} сделок")
 
-            # 3. События (каждые 6 тиков = 30 минут)
+            # 4. События (каждые 6 тиков = 30 минут)
             if tick_count % 6 == 0:
                 event = EventService.trigger_random_event()
                 logger.info(f"🌍 Событие: {event['name']} - {event['message']}")
