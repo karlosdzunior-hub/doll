@@ -509,15 +509,32 @@ async def sell_resource(callback: CallbackQuery):
 async def menu_shop(callback: CallbackQuery):
     user_id = callback.from_user.id
     balance = db.get_balance(user_id)
-    vip = "⭐ Активен" if db.check_vip(user_id) else "❌ Неактивен"
-    boost = "⚡ Активен" if db.check_boost(user_id) else "❌ Неактивен"
+    is_vip = db.check_vip(user_id)
+    is_boost = db.check_boost(user_id)
     shields = db.get_item(user_id, "shield")
+
+    user = db.get_user(user_id)
+    vip_expire = ""
+    if is_vip and user and user.get("vip_expire"):
+        from datetime import datetime
+        expire_dt = datetime.fromisoformat(user["vip_expire"])
+        days_left = (expire_dt - datetime.now()).days + 1
+        vip_expire = f" (ещё {days_left} дн.)"
+
+    vip_status = f"⭐ VIP активен{vip_expire}" if is_vip else "❌ VIP неактивен"
+    boost_status = "⚡ Буст x2 активен" if is_boost else "❌ Буст неактивен"
 
     text = f"""🎁 <b>Магазин</b>
 
 💰 Баланс: ${balance:.2f}
-{vip} | {boost}
+{vip_status}
+{boost_status}
 🛡️ Щитов: {shields}
+
+⭐ <b>VIP даёт:</b>
+• +20% к производству бизнесов
+• -30% к расходу энергии
+• Значок ⭐ в профиле
 """
 
     await callback.message.edit_text(text, reply_markup=get_shop_menu())
@@ -525,18 +542,18 @@ async def menu_shop(callback: CallbackQuery):
 
 
 @router.callback_query(F.data == "buy_vip")
-async def buy_vip(callback: CallbackQuery):
+async def buy_vip(callback: CallbackQuery, bot: Bot):
     user_id = callback.from_user.id
 
     if db.check_vip(user_id):
         await callback.answer("⭐ VIP уже активен!", show_alert=True)
         return
 
-    # TODO: VIP за Stars - требует ручной обработки через Stars
-    # Для VIP используем отдельную систему
-    await callback.answer(
-        "💳 VIP покупается через Stars. Скоро будет доступно!", show_alert=True
-    )
+    success = await send_invoice_to_user(bot, user_id, "vip")
+    if success:
+        await callback.answer("💳 Отправляю счёт на оплату VIP...", show_alert=True)
+    else:
+        await callback.answer("❌ Ошибка отправки счёта!", show_alert=True)
 
 
 @router.callback_query(F.data == "buy_boost_1h")
