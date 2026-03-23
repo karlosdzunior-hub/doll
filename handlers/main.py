@@ -6,7 +6,8 @@ Production handlers для бота "Микрокапитализм: Жизнь 
 import re
 import uuid
 import logging
-from aiogram import Router, F
+from typing import Callable, Dict, Any, Awaitable
+from aiogram import Router, F, BaseMiddleware
 from aiogram.filters import Command, CommandStart
 from aiogram.types import (
     Message,
@@ -27,6 +28,29 @@ from services import EnergyService, MarketService, EventService
 
 logger = logging.getLogger(__name__)
 router = Router()
+
+
+class AutoJoinMiddleware(BaseMiddleware):
+    """Автоматически регистрирует пользователя и чат при каждом сообщении в группе."""
+    async def __call__(
+        self,
+        handler: Callable[[Message, Dict[str, Any]], Awaitable[Any]],
+        event: Message,
+        data: Dict[str, Any],
+    ) -> Any:
+        if event.chat.type != "private" and event.from_user:
+            chat_id = event.chat.id
+            user_id = event.from_user.id
+            username = event.from_user.username or event.from_user.first_name
+            db.create_user(user_id, username)
+            db.create_or_update_chat(chat_id, event.chat.type, event.chat.title)
+            db.add_user_to_chat(chat_id, user_id)
+            db.add_chat_xp(chat_id, config.XP_PER_COMMAND)
+            db.log_action(user_id, "chat_command", f"Used command in chat {chat_id}")
+        return await handler(event, data)
+
+
+router.message.middleware(AutoJoinMiddleware())
 
 # Провайдер токена для Telegram Stars (пустой для Stars)
 TELEGRAM_STARS_PROVIDER_TOKEN = ""
@@ -846,26 +870,6 @@ async def buy_jackpot_ticket(callback: CallbackQuery, bot: Bot):
         await callback.answer("❌ Ошибка!", show_alert=True)
 
 
-# ==================== АВТОМАТИЧЕСКОЕ ДОБАВЛЕНИЕ В ЧАТ ====================
-
-
-@router.message(F.chat.type != "private")
-async def auto_join_chat(message: Message):
-    """Автоматически добавляет пользователя в чат при первом сообщении"""
-    if not message.from_user:
-        return
-    chat_id = message.chat.id
-    user_id = message.from_user.id
-    username = message.from_user.username or message.from_user.first_name
-
-    db.create_user(user_id, username)
-    db.create_or_update_chat(chat_id, message.chat.type, message.chat.title)
-    db.add_user_to_chat(chat_id, user_id)
-
-    db.add_chat_xp(chat_id, config.XP_PER_COMMAND)
-    db.log_action(user_id, "chat_command", f"Used command in chat {chat_id}")
-
-
 # ==================== ОБРАБОТКА ДОБАВЛЕНИЯ БОТА В ЧАТ ====================
 
 
@@ -1030,6 +1034,54 @@ async def jackpot_info(message: Message):
     )
 
     await message.reply(text, reply_markup=keyboard)
+
+
+# ==================== АНГЛИЙСКИЕ ПСЕВДОНИМЫ КОМАНД ====================
+
+@router.message(F.chat.type != "private", Command("balance"))
+async def cmd_balance(message: Message):
+    await chat_balance(message)
+
+@router.message(F.chat.type != "private", Command("business"))
+async def cmd_business(message: Message):
+    await chat_business(message)
+
+@router.message(F.chat.type != "private", Command("market"))
+async def cmd_market(message: Message):
+    await chat_market(message)
+
+@router.message(F.chat.type != "private", Command("top"))
+async def cmd_top(message: Message):
+    await chat_top(message)
+
+@router.message(F.chat.type != "private", Command("chatlevel"))
+async def cmd_chatlevel(message: Message):
+    await chat_level(message)
+
+@router.message(F.chat.type != "private", Command("topchats"))
+async def cmd_topchats(message: Message):
+    await top_chats(message)
+
+@router.message(F.chat.type != "private", Command("lottery"))
+async def cmd_lottery(message: Message):
+    await chat_lottery(message)
+
+@router.message(F.chat.type != "private", Command("jackpot"))
+async def cmd_jackpot(message: Message):
+    await jackpot_info(message)
+
+@router.message(F.chat.type != "private", Command("send"))
+async def cmd_send(message: Message):
+    if not message.text:
+        await message.reply("💸 Формат: /send @username сумма\n💡 Пример: /send @username 100")
+        return
+    # Подменяем текст чтобы переиспользовать логику русской команды
+    match = re.match(r"^/send\s*@?(\w+)\s*(\d+(?:\.\d+)?)", message.text)
+    if not match:
+        await message.reply("💸 Формат: /send @username сумма\n💡 Пример: /send @username 100")
+        return
+    message.text = f"/отправить @{match.group(1)} {match.group(2)}"
+    await chat_transfer(message)
 
 
 # ==================== TELEGRAM STARS ПЛАТЕЖИ ====================
