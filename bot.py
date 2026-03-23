@@ -10,6 +10,7 @@ from datetime import datetime
 from aiogram import Bot, Dispatcher
 from aiogram.enums import ParseMode
 from aiogram.client.default import DefaultBotProperties
+from aiogram.types import BotCommand, BotCommandScopeAllPrivateChats, BotCommandScopeAllGroupChats
 
 from config import config
 from handlers import router
@@ -90,6 +91,31 @@ async def on_startup():
         logger.info(f"✅ Бот @{me.username} (ID: {me.id}) запущен!")
     except Exception as e:
         logger.error(f"❌ Не удалось получить информацию о боте: {e}")
+
+    # Команды для личных чатов
+    private_commands = [
+        BotCommand(command="start", description="🎮 Открыть главное меню"),
+    ]
+
+    # Команды для групповых чатов (только латиница — требование Telegram)
+    group_commands = [
+        BotCommand(command="balance", description="💰 Мой баланс"),
+        BotCommand(command="business", description="🏭 Мои бизнесы"),
+        BotCommand(command="market", description="📊 Рынок ресурсов"),
+        BotCommand(command="top", description="🏆 Топ игроков"),
+        BotCommand(command="chatlevel", description="⭐ Уровень чата"),
+        BotCommand(command="topchats", description="🌍 Топ чатов"),
+        BotCommand(command="lottery", description="🎰 Лотерея"),
+        BotCommand(command="jackpot", description="💎 Джекпот чата"),
+        BotCommand(command="send", description="💸 Перевод (напр: /send @user 10)"),
+    ]
+
+    try:
+        await bot.set_my_commands(private_commands, scope=BotCommandScopeAllPrivateChats())
+        await bot.set_my_commands(group_commands, scope=BotCommandScopeAllGroupChats())
+        logger.info("✅ Команды зарегистрированы")
+    except Exception as e:
+        logger.error(f"❌ Ошибка регистрации команд: {e}")
 
     # Запускаем фоновые задачи
     asyncio.create_task(background_tasks())
