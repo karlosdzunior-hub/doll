@@ -72,17 +72,20 @@ async def get_bot_username(bot: Bot) -> str:
         return ""
 
 
-def get_main_menu(bot_username: str = None) -> InlineKeyboardMarkup:
+def get_main_menu(bot_username: str = None, jackpot_bank: float = None) -> InlineKeyboardMarkup:
+    bank_label = f" (банк: ${jackpot_bank:.0f})" if jackpot_bank is not None else ""
     keyboard = [
         [InlineKeyboardButton(text="🏠 Профиль", callback_data="menu_balance")],
         [InlineKeyboardButton(text="💼 Бизнесы", callback_data="menu_business")],
         [InlineKeyboardButton(text="📊 Рынок", callback_data="menu_market")],
-        [InlineKeyboardButton(text="🎁 Магазин", callback_data="menu_shop")],
+        [InlineKeyboardButton(text=f"🎰 Джекпот{bank_label}", callback_data="jackpot_menu")],
+        [InlineKeyboardButton(text="🎲 Лотерея", callback_data="lottery_play")],
+        [InlineKeyboardButton(text="💳 Кредиты", callback_data="credit_menu")],
+        [InlineKeyboardButton(text="🎁 Магазин ⭐", callback_data="menu_shop")],
         [InlineKeyboardButton(text="🔝 Топ", callback_data="menu_top")],
         [InlineKeyboardButton(text="👥 Рефералы", callback_data="menu_referrals")],
     ]
-    
-    # Добавляем кнопку добавления бота в чат
+
     if bot_username:
         keyboard.append(
             [InlineKeyboardButton(
@@ -90,7 +93,7 @@ def get_main_menu(bot_username: str = None) -> InlineKeyboardMarkup:
                 url=f"https://t.me/{bot_username}?startgroup=true"
             )]
         )
-    
+
     return InlineKeyboardMarkup(inline_keyboard=keyboard)
 
 
@@ -348,7 +351,8 @@ async def menu_balance(callback: CallbackQuery):
     if energy_status["current"] < config.MIN_ENERGY_TO_WORK:
         await callback.message.edit_text(text, reply_markup=get_no_energy_menu())
     else:
-        await callback.message.edit_text(text, reply_markup=get_main_menu(bot_username))
+        jackpot_bank = db.get_jackpot_bank()
+        await callback.message.edit_text(text, reply_markup=get_main_menu(bot_username, jackpot_bank))
 
     await callback.answer()
 
@@ -751,10 +755,48 @@ https://t.me/{bot_username}?start={user_id}
 @router.callback_query(F.data == "menu_main")
 async def menu_main(callback: CallbackQuery):
     bot_username = await get_bot_username(callback.bot)
+    jackpot_bank = db.get_jackpot_bank()
     await callback.message.edit_text(
-        "📋 <b>Главное меню:</b>", reply_markup=get_main_menu(bot_username)
+        "📋 <b>Главное меню:</b>", reply_markup=get_main_menu(bot_username, jackpot_bank)
     )
     await callback.answer()
+
+
+@router.callback_query(F.data == "credit_menu")
+async def credit_menu_callback(callback: CallbackQuery):
+    """Меню кредитов из главного меню"""
+    user_id = callback.from_user.id
+    status = CreditService.get_credit_status(db, user_id)
+
+    if status["has_credit"]:
+        kb = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="💸 Погасить кредит", callback_data="repay_credit")],
+            [InlineKeyboardButton(text="🔙 Назад", callback_data="menu_main")],
+        ])
+        await callback.message.edit_text(status["message"], reply_markup=kb)
+    else:
+        kb = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="💵 +$200 (вернуть $260, 12ч)", callback_data="credit_small")],
+            [InlineKeyboardButton(text="💰 +$500 (вернуть $700, 24ч)", callback_data="credit_medium")],
+            [InlineKeyboardButton(text="🏦 +$1000 (вернуть $1500, 48ч)", callback_data="credit_large")],
+            [InlineKeyboardButton(text="🔙 Назад", callback_data="menu_main")],
+        ])
+        await callback.message.edit_text(status["message"], reply_markup=kb)
+    await callback.answer()
+
+
+@router.callback_query(F.data == "repay_credit")
+async def repay_credit_callback(callback: CallbackQuery):
+    """Погасить кредит через кнопку"""
+    user_id = callback.from_user.id
+    result = CreditService.repay_credit(db, user_id)
+    await callback.answer(result["message"][:200], show_alert=True)
+    # Обновляем статус
+    status = CreditService.get_credit_status(db, user_id)
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🔙 Назад", callback_data="menu_main")],
+    ])
+    await callback.message.edit_text(status["message"], reply_markup=kb)
 
 
 # ==================== ЧАТ-КОМАНДЫ ====================

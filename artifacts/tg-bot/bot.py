@@ -381,10 +381,15 @@ async def on_startup():
     ]
 
     group_commands = [
-        BotCommand(command="balance",  description="💰 Мой баланс"),
-        BotCommand(command="top",      description="🏆 Топ игроков"),
-        BotCommand(command="jackpot",  description="🎰 Джекпот"),
-        BotCommand(command="lottery",  description="🎲 Лотерея"),
+        BotCommand(command="balance",   description="💰 Мой баланс"),
+        BotCommand(command="business",  description="🏭 Мои бизнесы"),
+        BotCommand(command="market",    description="📊 Рынок"),
+        BotCommand(command="jackpot",   description="🎰 Джекпот"),
+        BotCommand(command="lottery",   description="🎲 Лотерея"),
+        BotCommand(command="top",       description="🏆 Топ игроков"),
+        BotCommand(command="send",      description="💸 Отправить деньги"),
+        BotCommand(command="chatlevel", description="📈 Уровень чата"),
+        BotCommand(command="topchats",  description="🏆 Топ чатов"),
     ]
 
     try:
