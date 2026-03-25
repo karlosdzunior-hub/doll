@@ -24,7 +24,7 @@ from aiogram.client.bot import Bot
 
 from config import config
 from db import db
-from services import EnergyService, MarketService, EventService
+from services import EnergyService, MarketService, EventService, JackpotService, CreditService, NotificationService
 
 logger = logging.getLogger(__name__)
 router = Router()
@@ -245,9 +245,30 @@ async def cmd_start(message: Message):
         except ValueError:
             pass
 
-    db.create_user(user_id, username, referral_id)
+    is_new = db.create_user(user_id, username, referral_id)
 
-    welcome = f"""
+    if is_new:
+        db.give_starting_ticket(user_id)
+
+    user = db.get_user(user_id)
+    balance = user["balance"] if user else config.STARTING_BALANCE
+    energy = user["energy"] if user else config.STARTING_ENERGY
+    tickets = db.get_jackpot_tickets(user_id)
+    jackpot_status = JackpotService.get_status(db)
+
+    welcome = NotificationService.build_onboarding_message(username, balance, int(energy), tickets)
+
+    onboarding_kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🎁 Забрать бонус!", callback_data="onboarding_bonus")],
+        [InlineKeyboardButton(text="🍋 Купить Лимонадную ($50)", callback_data="buy_business_lemonade")],
+        [InlineKeyboardButton(
+            text=f"🎰 Джекпот (банк: ${jackpot_status['bank']:.0f})",
+            callback_data="jackpot_menu"
+        )],
+        [InlineKeyboardButton(text="📊 Главное меню", callback_data="menu_main")],
+    ])
+
+    await message.answer(welcome, reply_markup=onboarding_kb)
 🎮 <b>Микрокапитализм</b>
 
 💵 Старт: $1
@@ -1031,6 +1052,21 @@ async def top_chats(message: Message):
 async def jackpot_info(message: Message):
     """Информация о джекпоте"""
     user_id = message.from_user.id
+    status = JackpotService.get_status(db)
+    my_tickets = db.get_jackpot_tickets(user_id)
+    text = status["message"] + f"\n\n🎫 Ваши билеты: <b>{my_tickets}</b>"
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🎫 Купить за $10", callback_data="jackpot_buy_cash")],
+        [
+            InlineKeyboardButton(text="1 билет (3⭐)", callback_data="buy_stars_ticket_1"),
+            InlineKeyboardButton(text="5 билетов (10⭐)", callback_data="buy_stars_ticket_5"),
+        ],
+    ])
+    await message.reply(text, reply_markup=keyboard)
+@router.message(F.chat.type != "private", F.text == "/джекпот")
+async def jackpot_info(message: Message):
+    """Информация о джекпоте"""
+    user_id = message.from_user.id
     tickets = db.get_item(user_id, "lottery_ticket")
 
     text = f"""🎰 <b>ДЖЕКПОТ</b>
@@ -1051,6 +1087,176 @@ async def jackpot_info(message: Message):
     )
 
     await message.reply(text, reply_markup=keyboard)
+
+
+
+# ==================== ОНБОРДИНГ CALLBACK ====================
+
+
+@router.callback_query(F.data == "onboarding_bonus")
+async def onboarding_bonus(callback: CallbackQuery):
+    """Бонус при онбординге — первый тест джекпота"""
+    user_id = callback.from_user.id
+    my_tickets = db.get_jackpot_tickets(user_id)
+
+    if my_tickets <= 0:
+        await callback.answer("🎫 У вас нет билетов!", show_alert=True)
+        return
+
+    if db.has_used_first_ticket(user_id):
+        await callback.answer("Вы уже использовали первый бонус!", show_alert=True)
+        return
+
+    result = JackpotService.first_ticket_spin(db, user_id)
+    jackpot_status = JackpotService.get_status(db)
+
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🍋 Купить бизнес ($50)", callback_data="buy_business_lemonade")],
+        [InlineKeyboardButton(
+            text=f"🎰 Банк: ${jackpot_status['bank']:.0f} — купить билет!",
+            callback_data="jackpot_menu"
+        )],
+    ])
+    await callback.message.edit_text(result["message"], reply_markup=kb)
+    await callback.answer()
+
+
+@router.callback_query(F.data == "jackpot_menu")
+async def jackpot_menu(callback: CallbackQuery):
+    """Меню джекпота"""
+    user_id = callback.from_user.id
+    status = JackpotService.get_status(db)
+    my_tickets = db.get_jackpot_tickets(user_id)
+    text = status["message"] + f"\n\n🎫 Ваши билеты: <b>{my_tickets}</b>"
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🎫 Купить за $10", callback_data="jackpot_buy_cash")],
+        [
+            InlineKeyboardButton(text="1 билет (3⭐)", callback_data="buy_stars_ticket_1"),
+            InlineKeyboardButton(text="5 билетов (10⭐)", callback_data="buy_stars_ticket_5"),
+        ],
+    ])
+    await callback.message.edit_text(text, reply_markup=kb)
+    await callback.answer()
+
+
+@router.callback_query(F.data == "jackpot_buy_cash")
+async def jackpot_buy_cash(callback: CallbackQuery):
+    """Купить 1 билет за $10"""
+    user_id = callback.from_user.id
+    result = JackpotService.buy_ticket(db, user_id)
+    if result["success"]:
+        await callback.answer(f"🎫 Куплен 1 билет! Банк: ${result['bank']:.2f}", show_alert=True)
+    else:
+        await callback.answer(f"❌ {result['error']}", show_alert=True)
+
+
+# ==================== КРЕДИТЫ ====================
+
+
+@router.message(Command("кредит"))
+async def cmd_credit(message: Message):
+    """Показать доступные кредиты"""
+    user_id = message.from_user.id
+    status = CreditService.get_credit_status(db, user_id)
+
+    if status["has_credit"]:
+        await message.answer(status["message"])
+        return
+
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="💵 +$200 (вернуть $260, 12ч)", callback_data="credit_small")],
+        [InlineKeyboardButton(text="💰 +$500 (вернуть $700, 24ч)", callback_data="credit_medium")],
+        [InlineKeyboardButton(text="🏦 +$1000 (вернуть $1500, 48ч)", callback_data="credit_large")],
+    ])
+    await message.answer(status["message"], reply_markup=kb)
+
+
+@router.callback_query(F.data.startswith("credit_"))
+async def take_credit_callback(callback: CallbackQuery):
+    """Взять кредит"""
+    user_id = callback.from_user.id
+    credit_type = callback.data.replace("credit_", "")
+
+    result = CreditService.take_credit(db, user_id, credit_type)
+    if result["success"]:
+        await callback.message.edit_text(result["message"])
+    else:
+        await callback.answer(f"❌ {result['error']}", show_alert=True)
+    await callback.answer()
+
+
+@router.message(Command("погасить"))
+async def cmd_repay(message: Message):
+    """Погасить кредит"""
+    user_id = message.from_user.id
+    status = CreditService.get_credit_status(db, user_id)
+
+    if not status["has_credit"]:
+        await message.answer("✅ У вас нет активных кредитов!")
+        return
+
+    result = CreditService.repay_credit(db, user_id)
+    await message.answer(result["message"])
+
+
+# ==================== БАНКРОТСТВО ====================
+
+
+@router.message(Command("банкротство"))
+async def cmd_bankruptcy(message: Message):
+    """Объявить банкротство"""
+    user_id = message.from_user.id
+    balance = db.get_balance(user_id)
+    active = db.get_active_credit(user_id)
+
+    if balance > 0 and not active:
+        await message.answer("❓ Вы не в долгу! Банкротство не нужно.")
+        return
+
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🏳️ Подтвердить банкротство", callback_data="confirm_bankruptcy")],
+        [InlineKeyboardButton(text="❌ Отмена", callback_data="cancel_bankruptcy")],
+    ])
+    await message.answer(
+        "⚠️ <b>Банкротство</b>\n\nВаши бизнесы будут проданы за 50%, "
+        "часть долга будет списана.\n\nПодтвердить?",
+        reply_markup=kb
+    )
+
+
+@router.callback_query(F.data == "confirm_bankruptcy")
+async def confirm_bankruptcy(callback: CallbackQuery):
+    user_id = callback.from_user.id
+    result = CreditService.handle_bankruptcy(db, user_id)
+    await callback.message.edit_text(result["message"])
+    await callback.answer()
+
+
+@router.callback_query(F.data == "cancel_bankruptcy")
+async def cancel_bankruptcy(callback: CallbackQuery):
+    await callback.message.delete()
+    await callback.answer("Отменено")
+
+
+# ==================== ЗВЁЗДЫ — НОВЫЕ ТОВАРЫ ====================
+
+
+@router.callback_query(F.data == "buy_stars_ticket_1")
+async def buy_stars_ticket_1(callback: CallbackQuery, bot: Bot):
+    success = await send_invoice_to_user(bot, callback.from_user.id, "ticket_1")
+    if success:
+        await callback.answer("💳 Отправляю счёт...", show_alert=True)
+    else:
+        await callback.answer("❌ Ошибка!", show_alert=True)
+
+
+@router.callback_query(F.data == "buy_stars_ticket_5")
+async def buy_stars_ticket_5(callback: CallbackQuery, bot: Bot):
+    success = await send_invoice_to_user(bot, callback.from_user.id, "ticket_5")
+    if success:
+        await callback.answer("💳 Отправляю счёт...", show_alert=True)
+    else:
+        await callback.answer("❌ Ошибка!", show_alert=True)
 
 
 # ==================== АНГЛИЙСКИЕ ПСЕВДОНИМЫ КОМАНД ====================
@@ -1157,7 +1363,31 @@ ITEMS_CONFIG = {
         "name": "🎫 Билет Джекпота",
         "stars": 5,
         "description": "Билет для участия в часовом джекпоте",
-        "reward": "🎫 Билет джекпота получен! Жди розыгрыша каждый час.",
+        "reward": "🎫 Билет джекпота получен! Жди розыгрыша каждые 6 часов.",
+    },
+    "ticket_1": {
+        "name": "🎫 1 Билет Джекпота",
+        "stars": 3,
+        "description": "1 билет для участия в джекпоте",
+        "reward": "🎫 +1 билет джекпота получен!",
+    },
+    "ticket_5": {
+        "name": "🎫 5 Билетов Джекпота",
+        "stars": 10,
+        "description": "5 билетов для участия в джекпоте",
+        "reward": "🎫 +5 билетов джекпота получено!",
+    },
+    "money_200": {
+        "name": "💵 +$200",
+        "stars": 5,
+        "description": "Пополнить баланс на $200",
+        "reward": "💵 +$200 добавлено на ваш баланс!",
+    },
+    "money_500": {
+        "name": "💰 +$500",
+        "stars": 10,
+        "description": "Пополнить баланс на $500",
+        "reward": "💰 +$500 добавлено на ваш баланс!",
     },
 }
 
@@ -1252,6 +1482,13 @@ async def process_successful_payment(user_id: int, item_key: str, chat_id: int =
         db.add_item(user_id, "lottery_premium_ticket", 1)
     elif item_key == "vip":
         db.set_vip(user_id, config.VIP_DURATION_DAYS)
+    elif item_key in ("ticket_1", "ticket_5"):
+        count = 1 if item_key == "ticket_1" else 5
+        db.add_jackpot_tickets(user_id, count)
+    elif item_key == "money_200":
+        db.update_balance(user_id, 200.0)
+    elif item_key == "money_500":
+        db.update_balance(user_id, 500.0)
     elif item_key == "jackpot_ticket":
         db.add_item(user_id, "lottery_ticket", 1)
     elif item_key == "xp_boost_chat":
