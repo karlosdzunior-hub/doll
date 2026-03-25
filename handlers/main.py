@@ -1051,31 +1051,6 @@ async def jackpot_info(message: Message):
         ],
     ])
     await message.reply(text, reply_markup=keyboard)
-@router.message(F.chat.type != "private", F.text == "/джекпот")
-async def jackpot_info(message: Message):
-    """Информация о джекпоте"""
-    user_id = message.from_user.id
-    tickets = db.get_item(user_id, "lottery_ticket")
-
-    text = f"""🎰 <b>ДЖЕКПОТ</b>
-
-🎫 Ваши билеты: {tickets}
-
-💡 Используйте билеты для участия в джекпоте!
-⏰ Джекпот разыгрывается автоматически каждый час."""
-
-    keyboard = InlineKeyboardMarkup(
-        inline_keyboard=[
-            [
-                InlineKeyboardButton(
-                    text="🎫 Купить билет (5⭐)", callback_data="buy_jackpot_ticket"
-                )
-            ]
-        ]
-    )
-
-    await message.reply(text, reply_markup=keyboard)
-
 
 
 # ==================== ОНБОРДИНГ CALLBACK ====================
@@ -1293,6 +1268,67 @@ async def cmd_send(message: Message):
         return
     message.text = f"/отправить @{match.group(1)} {match.group(2)}"
     await chat_transfer(message)
+
+
+# ---- Приватные латинские алиасы ----
+
+@router.message(Command("balance"))
+async def private_cmd_balance(message: Message):
+    await chat_balance(message)
+
+@router.message(Command("shop"))
+async def private_cmd_shop(message: Message):
+    await message.answer(
+        "🛒 <b>Магазин</b>\n\nИспользуйте главное меню (/start) для покупки бизнесов и энергии.\n\n"
+        "Доступные бизнесы:\n"
+        "🍋 Лимонадная — $50\n"
+        "🌾 Ферма — $200\n"
+        "🏭 Завод — $600\n"
+        "💻 IT-стартап — $1500\n"
+        "🪙 Крипто-майнинг — $3000"
+    )
+
+@router.message(Command("jackpot"))
+async def private_cmd_jackpot(message: Message):
+    await jackpot_info(message)
+
+@router.message(Command("lottery"))
+async def private_cmd_lottery(message: Message):
+    await chat_lottery(message)
+
+@router.message(Command("credit"))
+async def private_cmd_credit(message: Message):
+    await cmd_credit(message)
+
+@router.message(Command("repay"))
+async def private_cmd_repay(message: Message):
+    await cmd_repay(message)
+
+@router.message(Command("bankrupt"))
+async def private_cmd_bankrupt(message: Message):
+    await cmd_bankruptcy(message)
+
+@router.message(Command("profile"))
+async def private_cmd_profile(message: Message):
+    await chat_balance(message)
+
+@router.message(Command("help"))
+async def private_cmd_help(message: Message):
+    text = (
+        "🎮 <b>Микрокапитализм — команды</b>\n\n"
+        "/balance — 💰 Мой баланс\n"
+        "/shop — 🛒 Магазин бизнесов\n"
+        "/jackpot — 🎰 Джекпот\n"
+        "/lottery — 🎲 Лотерея\n"
+        "/credit — 💳 Взять кредит\n"
+        "/repay — 💸 Погасить кредит\n"
+        "/bankrupt — 🏳️ Банкротство\n"
+        "/top — 🏆 Таблица лидеров\n"
+        "/help — ❓ Помощь\n\n"
+        "📌 Русские команды также работают:\n"
+        "/баланс /магазин /джекпот /кредит /погасить /банкротство"
+    )
+    await message.answer(text)
 
 
 # ==================== TELEGRAM STARS ПЛАТЕЖИ ====================
