@@ -269,18 +269,6 @@ async def cmd_start(message: Message):
     ])
 
     await message.answer(welcome, reply_markup=onboarding_kb)
-🎮 <b>Микрокапитализм</b>
-
-💵 Старт: $1
-⚡ Энергия: {config.MAX_ENERGY}
-
-📈 Развивай бизнесы, торгуй на рынке!
-⚠️ Без энергии бизнесы не работают!
-
-👥 Рефералы → бонусы!
-"""
-    bot_username = await get_bot_username(message.bot)
-    await message.answer(welcome, reply_markup=get_main_menu(bot_username))
 
 
 # ==================== ПРОФИЛЬ (С ЭНЕРГИЕЙ) ====================
@@ -1023,7 +1011,7 @@ async def chat_level(message: Message):
 ⭐ XP: {xp}/{xp_needed}
 📈 Прогресс: {progress:.1f}%
 
-💡 Бонусы:{bonuses_text or "\n• Пока нет бонусов"}"""
+💡 Бонусы:{bonuses_text or chr(10) + "• Пока нет бонусов"}"""
 
     await message.reply(text, reply_markup=keyboard)
 
