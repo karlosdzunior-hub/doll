@@ -190,25 +190,25 @@ async def on_startup():
         logger.error(f"❌ Ошибка получения info бота: {e}")
 
     private_commands = [
-        BotCommand(command="start",       description="🎮 Начать игру"),
-        BotCommand(command="баланс",      description="💰 Мой баланс"),
-        BotCommand(command="бизнесы",     description="🏭 Мои бизнесы"),
-        BotCommand(command="магазин",     description="🛒 Купить бизнес/энергию"),
-        BotCommand(command="джекпот",     description="🎰 Джекпот"),
-        BotCommand(command="лотерея",     description="🎲 Лотерея"),
-        BotCommand(command="кредит",      description="💳 Взять кредит"),
-        BotCommand(command="погасить",    description="💸 Погасить кредит"),
-        BotCommand(command="банкротство", description="🏳️ Объявить банкротство"),
-        BotCommand(command="профиль",     description="👤 Мой профиль"),
-        BotCommand(command="топ",         description="🏆 Таблица лидеров"),
-        BotCommand(command="помощь",      description="❓ Помощь"),
+        BotCommand(command="start",      description="🎮 Начать игру"),
+        BotCommand(command="balance",    description="💰 Мой баланс"),
+        BotCommand(command="business",   description="🏭 Мои бизнесы"),
+        BotCommand(command="shop",       description="🛒 Купить бизнес/энергию"),
+        BotCommand(command="jackpot",    description="🎰 Джекпот"),
+        BotCommand(command="lottery",    description="🎲 Лотерея"),
+        BotCommand(command="credit",     description="💳 Взять кредит"),
+        BotCommand(command="repay",      description="💸 Погасить кредит"),
+        BotCommand(command="bankrupt",   description="🏳️ Объявить банкротство"),
+        BotCommand(command="profile",    description="👤 Мой профиль"),
+        BotCommand(command="top",        description="🏆 Таблица лидеров"),
+        BotCommand(command="help",       description="❓ Помощь"),
     ]
 
     group_commands = [
-        BotCommand(command="баланс",     description="💰 Мой баланс"),
-        BotCommand(command="топ",        description="🏆 Топ игроков"),
-        BotCommand(command="джекпот",    description="🎰 Джекпот"),
-        BotCommand(command="лотерея",    description="🎲 Лотерея"),
+        BotCommand(command="balance",  description="💰 Мой баланс"),
+        BotCommand(command="top",      description="🏆 Топ игроков"),
+        BotCommand(command="jackpot",  description="🎰 Джекпот"),
+        BotCommand(command="lottery",  description="🎲 Лотерея"),
     ]
 
     try:
