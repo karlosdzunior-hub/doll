@@ -184,6 +184,36 @@ class Database:
                 created_at DATETIME DEFAULT CURRENT_TIMESTAMP
             )""")
 
+            # Банк джекпота
+            cursor.execute("""CREATE TABLE IF NOT EXISTS jackpot_bank (
+                id INTEGER PRIMARY KEY DEFAULT 1,
+                amount REAL DEFAULT 0.0,
+                last_draw DATETIME,
+                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            )""")
+            cursor.execute("INSERT OR IGNORE INTO jackpot_bank (id, amount) VALUES (1, 0.0)")
+
+            # Билеты джекпота у игроков
+            cursor.execute("""CREATE TABLE IF NOT EXISTS jackpot_tickets (
+                user_id INTEGER PRIMARY KEY,
+                tickets INTEGER DEFAULT 0,
+                first_used INTEGER DEFAULT 0,
+                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            )""")
+
+            # Кредиты / займы
+            cursor.execute("""CREATE TABLE IF NOT EXISTS credits (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER,
+                credit_type TEXT,
+                amount REAL,
+                repay_amount REAL,
+                paid_amount REAL DEFAULT 0.0,
+                due_time DATETIME,
+                status TEXT DEFAULT 'active',
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            )""")
+
             # Таблица платежей (Telegram Stars)
             cursor.execute("""CREATE TABLE IF NOT EXISTS payments (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -257,7 +287,7 @@ class Database:
                         user_id,
                         username,
                         config.STARTING_BALANCE,
-                        float(config.MAX_ENERGY),
+                        float(config.STARTING_ENERGY),
                         referral_id,
                     ),
                 )
@@ -1261,6 +1291,150 @@ class Database:
         for user_row in users:
             user_id = user_row["user_id"]
             EnergyService.add_energy(user_id, energy_bonus)
+
+
+    # ==================== ДЖЕКПОТ ====================
+
+    def get_jackpot_bank(self) -> float:
+        with self.get_connection() as conn:
+            row = conn.cursor().execute("SELECT amount FROM jackpot_bank WHERE id=1").fetchone()
+            return float(row["amount"]) if row else 0.0
+
+    def add_to_jackpot_bank(self, amount: float):
+        with self.get_connection() as conn:
+            conn.cursor().execute(
+                "UPDATE jackpot_bank SET amount = amount + ?, updated_at = CURRENT_TIMESTAMP WHERE id=1",
+                (amount,)
+            )
+
+    def reset_jackpot_pool(self):
+        with self.get_connection() as conn:
+            conn.cursor().execute("UPDATE jackpot_bank SET amount = 0.0, last_draw = CURRENT_TIMESTAMP WHERE id=1")
+            conn.cursor().execute("UPDATE jackpot_tickets SET tickets = 0")
+
+    def add_jackpot_tickets(self, user_id: int, count: int = 1):
+        with self.get_connection() as conn:
+            conn.cursor().execute(
+                """INSERT INTO jackpot_tickets (user_id, tickets) VALUES (?, ?)
+                   ON CONFLICT(user_id) DO UPDATE SET tickets = tickets + ?, updated_at = CURRENT_TIMESTAMP""",
+                (user_id, count, count)
+            )
+
+    def use_jackpot_ticket(self, user_id: int):
+        with self.get_connection() as conn:
+            conn.cursor().execute(
+                """UPDATE jackpot_tickets SET tickets = MAX(0, tickets - 1),
+                   first_used = 1, updated_at = CURRENT_TIMESTAMP WHERE user_id = ?""",
+                (user_id,)
+            )
+
+    def has_used_first_ticket(self, user_id: int) -> bool:
+        with self.get_connection() as conn:
+            row = conn.cursor().execute(
+                "SELECT first_used FROM jackpot_tickets WHERE user_id=?", (user_id,)
+            ).fetchone()
+            return bool(row and row["first_used"])
+
+    def get_jackpot_tickets(self, user_id: int) -> int:
+        with self.get_connection() as conn:
+            row = conn.cursor().execute(
+                "SELECT tickets FROM jackpot_tickets WHERE user_id=?", (user_id,)
+            ).fetchone()
+            return int(row["tickets"]) if row else 0
+
+    def get_jackpot_participants(self) -> list:
+        with self.get_connection() as conn:
+            rows = conn.cursor().execute(
+                "SELECT user_id, tickets FROM jackpot_tickets WHERE tickets > 0"
+            ).fetchall()
+            return [{"user_id": r["user_id"], "tickets": r["tickets"]} for r in rows]
+
+    def get_last_jackpot_draw(self):
+        with self.get_connection() as conn:
+            row = conn.cursor().execute("SELECT last_draw FROM jackpot_bank WHERE id=1").fetchone()
+            if row and row["last_draw"]:
+                from datetime import datetime
+                try:
+                    return datetime.fromisoformat(row["last_draw"])
+                except Exception:
+                    return None
+            return None
+
+    def set_jackpot_draw_time(self):
+        with self.get_connection() as conn:
+            conn.cursor().execute("UPDATE jackpot_bank SET last_draw = CURRENT_TIMESTAMP WHERE id=1")
+
+    # ==================== КРЕДИТЫ ====================
+
+    def create_credit(self, user_id: int, credit_type: str, amount: float, repay: float, due_time) -> int:
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                """INSERT INTO credits (user_id, credit_type, amount, repay_amount, due_time)
+                   VALUES (?, ?, ?, ?, ?)""",
+                (user_id, credit_type, amount, repay, due_time.isoformat())
+            )
+            return cursor.lastrowid
+
+    def get_active_credit(self, user_id: int):
+        with self.get_connection() as conn:
+            return conn.cursor().execute(
+                "SELECT * FROM credits WHERE user_id=? AND status='active' ORDER BY created_at DESC LIMIT 1",
+                (user_id,)
+            ).fetchone()
+
+    def pay_credit(self, user_id: int, credit_id: int, amount: float):
+        with self.get_connection() as conn:
+            conn.cursor().execute(
+                "UPDATE credits SET paid_amount = paid_amount + ? WHERE id=? AND user_id=?",
+                (amount, credit_id, user_id)
+            )
+
+    def close_credit(self, user_id: int, credit_id: int):
+        with self.get_connection() as conn:
+            conn.cursor().execute(
+                "UPDATE credits SET status='closed' WHERE id=? AND user_id=?",
+                (credit_id, user_id)
+            )
+
+    def get_overdue_credits(self) -> list:
+        with self.get_connection() as conn:
+            rows = conn.cursor().execute(
+                "SELECT * FROM credits WHERE status='active' AND due_time < CURRENT_TIMESTAMP"
+            ).fetchall()
+            return [dict(zip([d[0] for d in rows.description if rows.description], r)) for r in rows] if rows else []
+
+    def add_credit_debt(self, credit_id: int, amount: float):
+        with self.get_connection() as conn:
+            conn.cursor().execute(
+                "UPDATE credits SET repay_amount = repay_amount + ? WHERE id=?",
+                (amount, credit_id)
+            )
+
+    def reduce_credit_debt(self, credit_id: int, amount: float):
+        with self.get_connection() as conn:
+            conn.cursor().execute(
+                "UPDATE credits SET repay_amount = MAX(0, repay_amount - ?) WHERE id=?",
+                (amount, credit_id)
+            )
+
+    def remove_business(self, user_id: int, biz_id: int):
+        with self.get_connection() as conn:
+            conn.cursor().execute(
+                "DELETE FROM businesses WHERE id=? AND user_id=?",
+                (biz_id, user_id)
+            )
+
+    def get_users_with_overdue_credits(self) -> list:
+        with self.get_connection() as conn:
+            rows = conn.cursor().execute(
+                """SELECT DISTINCT c.user_id FROM credits c
+                   WHERE c.status='active' AND c.due_time < CURRENT_TIMESTAMP"""
+            ).fetchall()
+            return [r["user_id"] for r in rows]
+
+    def give_starting_ticket(self, user_id: int):
+        self.add_jackpot_tickets(user_id, 1)
 
 
 db = Database()
