@@ -1,0 +1,17 @@
+[Unit]
+Description=Microbot Telegram Bot - Микрокапитализм
+After=network.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/root/microbot
+ExecStart=/root/microbot/venv/bin/python3 /root/microbot/bot.py
+EnvironmentFile=/root/microbot/.env
+Restart=always
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
