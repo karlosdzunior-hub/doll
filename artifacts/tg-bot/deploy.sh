@@ -1,54 +1,69 @@
 #!/bin/bash
 # ============================================
 # ДЕПЛОЙ БОТА "МИКРОКАПИТАЛИЗМ" НА VPS
-# Запусти: bash deploy.sh
+# Запусти на VPS от root:
+#   curl -o deploy.sh https://raw.githubusercontent.com/karlosdzunior-hub/doll/main/artifacts/tg-bot/deploy.sh
+#   bash deploy.sh
 # ============================================
 
 set -e
 
+REPO_URL="https://github.com/karlosdzunior-hub/doll.git"
 BOT_DIR="/root/microbot"
+BOT_SUBDIR="artifacts/tg-bot"
 SERVICE_NAME="microbot"
-PYTHON="python3"
 
 echo "=================================="
 echo "  Установка бота Микрокапитализм"
 echo "=================================="
 
 # 1. Обновляем систему
-echo "[1/6] Обновление системы..."
+echo "[1/7] Обновление системы..."
 apt-get update -qq
 apt-get install -y python3 python3-pip python3-venv git curl
 
-# 2. Создаём папку
-echo "[2/6] Создание директории $BOT_DIR..."
-mkdir -p "$BOT_DIR"
+# 2. Клонируем репозиторий
+echo "[2/7] Клонирование репозитория..."
+if [ -d "$BOT_DIR" ]; then
+    echo "  Папка уже существует — обновляем..."
+    cd "$BOT_DIR"
+    git pull
+else
+    git clone "$REPO_URL" /tmp/doll-repo
+    mkdir -p "$BOT_DIR"
+    cp -r /tmp/doll-repo/$BOT_SUBDIR/. "$BOT_DIR/"
+    rm -rf /tmp/doll-repo
+fi
+
 cd "$BOT_DIR"
 
-# 3. Копируем файлы (если запущено из папки бота)
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-echo "[3/6] Копирование файлов из $SCRIPT_DIR..."
-cp -r "$SCRIPT_DIR"/* "$BOT_DIR/" 2>/dev/null || true
-
-# 4. Создаём виртуальное окружение и устанавливаем зависимости
-echo "[4/6] Установка Python-зависимостей..."
+# 3. Создаём виртуальное окружение
+echo "[3/7] Создание виртуального окружения Python..."
 python3 -m venv "$BOT_DIR/venv"
+
+# 4. Устанавливаем зависимости
+echo "[4/7] Установка зависимостей..."
 "$BOT_DIR/venv/bin/pip" install --quiet --upgrade pip
 "$BOT_DIR/venv/bin/pip" install --quiet -r "$BOT_DIR/requirements.txt"
 
-# 5. Проверяем токен
+# 5. Настраиваем .env
+echo "[5/7] Настройка переменных окружения..."
 if [ -f "$BOT_DIR/.env" ]; then
-    echo "[5/6] Файл .env найден."
+    echo "  Файл .env уже существует, пропускаем."
 else
-    echo "[5/6] ВНИМАНИЕ: Файл .env не найден!"
-    echo "      Создай файл: $BOT_DIR/.env"
-    echo "      И вставь строку: TELEGRAM_BOT_TOKEN=твой_токен"
+    echo "  Создаём .env из примера..."
+    cp "$BOT_DIR/.env.example" "$BOT_DIR/.env"
+    echo ""
+    echo "  ⚠️  ВАЖНО: заполни файл .env перед запуском!"
+    echo "  nano $BOT_DIR/.env"
+    echo ""
 fi
 
 # 6. Создаём systemd сервис
-echo "[6/6] Настройка автозапуска (systemd)..."
+echo "[6/7] Настройка systemd сервиса..."
 cat > /etc/systemd/system/${SERVICE_NAME}.service << EOF
 [Unit]
-Description=Microbot Telegram Bot
+Description=Microbot Telegram Bot - Микрокапитализм
 After=network.target
 
 [Service]
@@ -59,6 +74,8 @@ ExecStart=${BOT_DIR}/venv/bin/python3 ${BOT_DIR}/bot.py
 EnvironmentFile=${BOT_DIR}/.env
 Restart=always
 RestartSec=10
+StandardOutput=journal
+StandardError=journal
 
 [Install]
 WantedBy=multi-user.target
@@ -68,19 +85,22 @@ systemctl daemon-reload
 systemctl enable "$SERVICE_NAME"
 
 echo ""
+echo "[7/7] Готово!"
+echo ""
 echo "=================================="
-echo "  Установка завершена!"
+echo "  Следующие шаги:"
 echo "=================================="
 echo ""
-echo "  Следующий шаг — создай файл .env:"
-echo "  nano $BOT_DIR/.env"
+echo "1. Заполни .env файл:"
+echo "   nano $BOT_DIR/.env"
 echo ""
-echo "  Вставь:"
-echo "  TELEGRAM_BOT_TOKEN=твой_токен"
+echo "2. Запусти бота:"
+echo "   systemctl start $SERVICE_NAME"
 echo ""
-echo "  Затем запусти:"
-echo "  systemctl start $SERVICE_NAME"
+echo "3. Проверь статус:"
+echo "   systemctl status $SERVICE_NAME"
 echo ""
-echo "  Проверь статус:"
-echo "  systemctl status $SERVICE_NAME"
+echo "4. Смотри логи:"
+echo "   journalctl -u $SERVICE_NAME -f"
+echo ""
 echo "=================================="
