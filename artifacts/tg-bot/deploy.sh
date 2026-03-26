@@ -8,9 +8,8 @@
 
 set -e
 
-REPO_URL="https://github.com/karlosdzunior-hub/doll.git"
+REPO_ZIP="https://raw.githubusercontent.com/karlosdzunior-hub/doll/main"
 BOT_DIR="/root/microbot"
-BOT_SUBDIR="artifacts/tg-bot"
 SERVICE_NAME="microbot"
 
 echo "=================================="
@@ -20,22 +19,37 @@ echo "=================================="
 # 1. Обновляем систему
 echo "[1/7] Обновление системы..."
 apt-get update -qq
-apt-get install -y python3 python3-pip python3-venv git curl
+apt-get install -y python3 python3-pip python3-venv curl unzip
 
-# 2. Клонируем репозиторий
-echo "[2/7] Клонирование репозитория..."
-if [ -d "$BOT_DIR" ]; then
-    echo "  Папка уже существует — обновляем..."
-    cd "$BOT_DIR"
-    git pull
-else
-    git clone "$REPO_URL" /tmp/doll-repo
-    mkdir -p "$BOT_DIR"
-    cp -r /tmp/doll-repo/$BOT_SUBDIR/. "$BOT_DIR/"
-    rm -rf /tmp/doll-repo
-fi
+# 2. Скачиваем файлы бота
+echo "[2/7] Скачивание файлов бота..."
+mkdir -p "$BOT_DIR"
+mkdir -p "$BOT_DIR/handlers"
+mkdir -p "$BOT_DIR/services"
 
-cd "$BOT_DIR"
+FILES=(
+    "bot.py"
+    "config.py"
+    "db.py"
+    "utils.py"
+    "requirements.txt"
+    ".env.example"
+    "handlers/__init__.py"
+    "handlers/main.py"
+    "services/__init__.py"
+    "services/chat.py"
+    "services/credits.py"
+    "services/energy.py"
+    "services/events.py"
+    "services/jackpot.py"
+    "services/market.py"
+    "services/notifications.py"
+)
+
+for FILE in "${FILES[@]}"; do
+    echo "  Скачиваем $FILE..."
+    curl -fsSL "$REPO_ZIP/artifacts/tg-bot/$FILE" -o "$BOT_DIR/$FILE"
+done
 
 # 3. Создаём виртуальное окружение
 echo "[3/7] Создание виртуального окружения Python..."
@@ -51,12 +65,7 @@ echo "[5/7] Настройка переменных окружения..."
 if [ -f "$BOT_DIR/.env" ]; then
     echo "  Файл .env уже существует, пропускаем."
 else
-    echo "  Создаём .env из примера..."
     cp "$BOT_DIR/.env.example" "$BOT_DIR/.env"
-    echo ""
-    echo "  ⚠️  ВАЖНО: заполни файл .env перед запуском!"
-    echo "  nano $BOT_DIR/.env"
-    echo ""
 fi
 
 # 6. Создаём systemd сервис
@@ -91,16 +100,13 @@ echo "=================================="
 echo "  Следующие шаги:"
 echo "=================================="
 echo ""
-echo "1. Заполни .env файл:"
-echo "   nano $BOT_DIR/.env"
-echo ""
-echo "2. Запусти бота:"
+echo "1. Запусти бота:"
 echo "   systemctl start $SERVICE_NAME"
 echo ""
-echo "3. Проверь статус:"
+echo "2. Проверь статус:"
 echo "   systemctl status $SERVICE_NAME"
 echo ""
-echo "4. Смотри логи:"
+echo "3. Смотри логи:"
 echo "   journalctl -u $SERVICE_NAME -f"
 echo ""
 echo "=================================="
