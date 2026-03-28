@@ -300,6 +300,13 @@ class Database:
                         (user_id, resource_type),
                     )
 
+                # Стартовый билет джекпота
+                cursor.execute(
+                    """INSERT INTO jackpot_tickets (user_id, tickets) VALUES (?, ?)
+                       ON CONFLICT(user_id) DO UPDATE SET tickets = tickets + ?""",
+                    (user_id, config.STARTING_TICKETS, config.STARTING_TICKETS)
+                )
+
                 # Бонус рефереру
                 if referral_id:
                     cursor.execute(
