@@ -247,7 +247,8 @@ class Database:
                 "CREATE INDEX IF NOT EXISTS idx_user_events ON user_events(user_id)"
             )
 
-            # Инициализация рынка
+            # Инициализация / миграция рынка
+            valid_resources = set(config.RESOURCES.keys())
             for resource_type, data in config.RESOURCES.items():
                 cursor.execute(
                     """INSERT OR IGNORE INTO market_prices 
@@ -255,6 +256,12 @@ class Database:
                     VALUES (?, ?, ?, 0, 0)""",
                     (resource_type, data["base_price"], data["base_price"]),
                 )
+            # Удаляем устаревшие типы ресурсов
+            old_rows = cursor.execute("SELECT resource_type FROM market_prices").fetchall()
+            for row in old_rows:
+                if row["resource_type"] not in valid_resources:
+                    cursor.execute("DELETE FROM market_prices WHERE resource_type = ?", (row["resource_type"],))
+                    cursor.execute("DELETE FROM user_resources WHERE resource_type = ?", (row["resource_type"],))
 
             conn.commit()
 
@@ -671,6 +678,219 @@ class Database:
             self.update_market_price(resource_type, demand_delta=amount)
 
         return True, f"Куплено {amount} ед. за ${cost:.2f}"
+
+    # ==================== NPC РЫНОК (ФИКСИРОВАННЫЕ ЦЕНЫ) ====================
+
+    def get_npc_prices_with_variance(self) -> dict:
+        """NPC-цены с динамикой ±20% от базовых"""
+        import random
+        result = {}
+        for resource, prices in config.NPC_PRICES.items():
+            variance = random.uniform(0.8, 1.2)
+            result[resource] = {
+                "buy":  round(prices["buy"] * variance, 2),   # бот покупает у игрока
+                "sell": round(prices["sell"] * variance, 2),  # бот продаёт игроку
+                "base_buy":  prices["buy"],
+                "base_sell": prices["sell"],
+            }
+        return result
+
+    def npc_buy_from_player(self, user_id: int, resource_type: str, quantity: int) -> tuple:
+        """Игрок продаёт ресурс NPC (боту). Возвращает (ok, msg, earned)"""
+        if resource_type not in config.NPC_PRICES:
+            return False, "Ресурс не найден", 0
+        resources = self.get_user_resources(user_id)
+        if resources.get(resource_type, 0) < quantity:
+            return False, f"Недостаточно ресурса (у вас: {int(resources.get(resource_type,0))})", 0
+        import random
+        variance = random.uniform(0.8, 1.2)
+        price_per_unit = round(config.NPC_PRICES[resource_type]["buy"] * variance, 2)
+        gross = price_per_unit * quantity
+        fee = round(gross * config.MARKET_FEE, 2)
+        earned = round(gross - fee, 2)
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                "UPDATE user_resources SET quantity = quantity - ? WHERE user_id = ? AND resource_type = ?",
+                (quantity, user_id, resource_type)
+            )
+            cursor.execute("UPDATE users SET balance = balance + ? WHERE user_id = ?", (earned, user_id))
+        return True, f"Продано {quantity} ед. → +${earned:.2f} (комиссия ${fee:.2f})", earned
+
+    def npc_sell_to_player(self, user_id: int, resource_type: str, quantity: int) -> tuple:
+        """Игрок покупает ресурс у NPC (бота). Возвращает (ok, msg, cost)"""
+        if resource_type not in config.NPC_PRICES:
+            return False, "Ресурс не найден", 0
+        import random
+        variance = random.uniform(0.8, 1.2)
+        price_per_unit = round(config.NPC_PRICES[resource_type]["sell"] * variance, 2)
+        cost = round(price_per_unit * quantity * (1 + config.MARKET_FEE), 2)
+        if self.get_balance(user_id) < cost:
+            return False, f"Недостаточно средств. Нужно: ${cost:.2f}", cost
+        resources = self.get_user_resources(user_id)
+        current = resources.get(resource_type, 0)
+        if current + quantity > config.RESOURCE_MAX:
+            return False, f"Склад заполнен! Макс: {config.RESOURCE_MAX} ед.", 0
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("UPDATE users SET balance = balance - ? WHERE user_id = ?", (cost, user_id))
+            cursor.execute(
+                """INSERT INTO user_resources (user_id, resource_type, quantity) VALUES (?, ?, ?)
+                   ON CONFLICT(user_id, resource_type) DO UPDATE SET quantity = quantity + ?""",
+                (user_id, resource_type, quantity, quantity)
+            )
+        return True, f"Куплено {quantity} ед. → -${cost:.2f}", cost
+
+    # ==================== P2P ОРДЕРА ====================
+
+    def create_p2p_order(self, user_id: int, resource_type: str, quantity: int, price_per_unit: float) -> tuple:
+        """Создать ордер на продажу. Возвращает (ok, msg, order_id)"""
+        if resource_type not in config.RESOURCES:
+            return False, "Неизвестный ресурс", 0
+        resources = self.get_user_resources(user_id)
+        if resources.get(resource_type, 0) < quantity:
+            return False, "Недостаточно ресурса", 0
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            # Резервируем ресурс
+            cursor.execute(
+                "UPDATE user_resources SET quantity = quantity - ? WHERE user_id = ? AND resource_type = ?",
+                (quantity, user_id, resource_type)
+            )
+            cursor.execute(
+                """INSERT INTO market_orders (user_id, resource_type, order_type, quantity, price, status)
+                   VALUES (?, ?, 'sell', ?, ?, 'active')""",
+                (user_id, resource_type, quantity, price_per_unit)
+            )
+            order_id = cursor.lastrowid
+        return True, f"Ордер #{order_id} создан: {quantity} ед. по ${price_per_unit:.2f}", order_id
+
+    def get_active_orders(self, resource_type: str = None) -> list:
+        """Список активных ордеров"""
+        with self.get_connection() as conn:
+            if resource_type:
+                rows = conn.cursor().execute(
+                    "SELECT * FROM market_orders WHERE status='active' AND resource_type=? ORDER BY price ASC LIMIT 20",
+                    (resource_type,)
+                ).fetchall()
+            else:
+                rows = conn.cursor().execute(
+                    "SELECT * FROM market_orders WHERE status='active' ORDER BY created_at DESC LIMIT 30"
+                ).fetchall()
+            return [dict(r) for r in rows]
+
+    def fill_p2p_order(self, buyer_id: int, order_id: int) -> tuple:
+        """Купить по P2P-ордеру"""
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            order = cursor.execute(
+                "SELECT * FROM market_orders WHERE id=? AND status='active'", (order_id,)
+            ).fetchone()
+            if not order:
+                return False, "Ордер не найден или уже выполнен"
+            order = dict(order)
+            if order["user_id"] == buyer_id:
+                return False, "Нельзя купить собственный ордер"
+            cost = round(order["quantity"] * order["price"] * (1 + config.MARKET_FEE), 2)
+            if self.get_balance(buyer_id) < cost:
+                return False, f"Недостаточно средств. Нужно: ${cost:.2f}"
+            resources = self.get_user_resources(buyer_id)
+            if resources.get(order["resource_type"], 0) + order["quantity"] > config.RESOURCE_MAX:
+                return False, "Склад заполнен!"
+            fee = round(order["quantity"] * order["price"] * config.MARKET_FEE, 2)
+            seller_gets = round(order["quantity"] * order["price"] - fee, 2)
+            # Транзакция
+            cursor.execute("UPDATE users SET balance = balance - ? WHERE user_id = ?", (cost, buyer_id))
+            cursor.execute("UPDATE users SET balance = balance + ? WHERE user_id = ?", (seller_gets, order["user_id"]))
+            cursor.execute(
+                """INSERT INTO user_resources (user_id, resource_type, quantity) VALUES (?, ?, ?)
+                   ON CONFLICT(user_id, resource_type) DO UPDATE SET quantity = quantity + ?""",
+                (buyer_id, order["resource_type"], order["quantity"], order["quantity"])
+            )
+            cursor.execute("UPDATE market_orders SET status='filled' WHERE id=?", (order_id,))
+        res_name = config.RESOURCES.get(order["resource_type"], {}).get("name", order["resource_type"])
+        return True, f"Куплено {order['quantity']} {res_name} за ${cost:.2f}"
+
+    def cancel_p2p_order(self, user_id: int, order_id: int) -> tuple:
+        """Отменить свой ордер и вернуть ресурсы"""
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            order = cursor.execute(
+                "SELECT * FROM market_orders WHERE id=? AND status='active' AND user_id=?",
+                (order_id, user_id)
+            ).fetchone()
+            if not order:
+                return False, "Ордер не найден"
+            order = dict(order)
+            cursor.execute(
+                """INSERT INTO user_resources (user_id, resource_type, quantity) VALUES (?, ?, ?)
+                   ON CONFLICT(user_id, resource_type) DO UPDATE SET quantity = MIN(?, quantity + ?)""",
+                (user_id, order["resource_type"], order["quantity"], config.RESOURCE_MAX, order["quantity"])
+            )
+            cursor.execute("UPDATE market_orders SET status='cancelled' WHERE id=?", (order_id,))
+        return True, f"Ордер #{order_id} отменён, ресурсы возвращены"
+
+    # ==================== ПРОИЗВОДСТВО РЕСУРСОВ ====================
+
+    def produce_resources_tick(self) -> dict:
+        """Почасовое производство ресурсов бизнесами. Возвращает статистику."""
+        stats = {"users": 0, "produced": 0, "money_earned": 0.0}
+        users = self.get_all_users_energy()
+        for user_data in users:
+            user_id = user_data["user_id"]
+            energy = float(user_data.get("energy", 0))
+            if energy < config.MIN_ENERGY_TO_WORK:
+                continue
+            businesses = self.get_user_businesses(user_id)
+            if not businesses:
+                continue
+            resources = self.get_user_resources(user_id)
+            for biz in businesses:
+                biz_key = biz["business_type"]
+                biz_cfg = config.BUSINESSES.get(biz_key)
+                if not biz_cfg:
+                    continue
+                # Проверяем требуемый ресурс
+                req = biz_cfg.get("requires")
+                req_amt = biz_cfg.get("require_amount", 0)
+                if req and resources.get(req, 0) < req_amt:
+                    continue  # нет нужного ресурса
+                # Вычитаем требуемый ресурс
+                if req and req_amt > 0:
+                    self.update_user_resource(user_id, req, -req_amt)
+                    resources[req] = resources.get(req, 0) - req_amt
+                # Производим ресурс
+                produces = biz_cfg.get("produces")
+                produce_amt = biz_cfg.get("produce_amount", 0)
+                if produces and produce_amt > 0:
+                    current = resources.get(produces, 0)
+                    actual = min(produce_amt, config.RESOURCE_MAX - current)
+                    if actual > 0:
+                        self.update_user_resource(user_id, produces, actual)
+                        resources[produces] = current + actual
+                        stats["produced"] += actual
+                # Деньги
+                income = biz_cfg.get("income_per_hour", 0)
+                if income > 0:
+                    self.update_balance(user_id, income)
+                    stats["money_earned"] += income
+            stats["users"] += 1
+        return stats
+
+    def update_npc_prices(self):
+        """Обновить NPC-цены ±20% от базовых (вызывать каждые 30 мин)"""
+        import random
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            for resource_type, base_prices in config.NPC_PRICES.items():
+                variance = random.uniform(0.8, 1.2)
+                new_price = round(base_prices["buy"] * variance + base_prices["sell"] * variance, 2) / 2
+                base = config.RESOURCES[resource_type]["base_price"]
+                new_current = round(base * variance, 2)
+                cursor.execute(
+                    "UPDATE market_prices SET current_price=?, last_update=CURRENT_TIMESTAMP WHERE resource_type=?",
+                    (new_current, resource_type)
+                )
 
     # ==================== ПЕРЕВОДЫ ====================
 
