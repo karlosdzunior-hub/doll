@@ -158,18 +158,49 @@ async def background_tasks():
             tick_count += 1
             logger.info(f"📊 Тик #{tick_count} ({datetime.now().strftime('%H:%M')})")
 
+            # Каждые 5 мин: энергия
             energy_stats = EnergyService.process_energy_tick()
             logger.info(f"⚡ Энергия: {energy_stats['users_processed']} игроков")
 
+            # Каждые 5 мин: денежный доход от бизнесов (старая логика)
             prod_stats = process_production_tick()
             logger.info(f"💰 Доход: {prod_stats['users_produced']} игроков, +${prod_stats['total_income']}")
 
-            market_stats = MarketService.process_market_tick()
-            logger.info(f"📊 Рынок: {market_stats['npc_trades']} NPC-сделок")
+            # Каждый час (12 тиков): производство ресурсов
+            if tick_count % 12 == 0:
+                from db import db as _db
+                res_stats = _db.produce_resources_tick()
+                logger.info(f"📦 Ресурсы: {res_stats['users']} игроков, {res_stats['produced']} ед.")
 
+            # Каждые 30 мин (6 тиков): обновление NPC-цен
             if tick_count % 6 == 0:
-                event = EventService.trigger_random_event()
-                logger.info(f"🌍 Событие: {event['name']}")
+                from db import db as _db
+                _db.update_npc_prices()
+                market_stats = MarketService.process_market_tick()
+                logger.info(f"📊 Рынок: цены обновлены, {market_stats['npc_trades']} NPC-сделок")
+
+            # Каждые ~90 мин (18 тиков): рыночное событие
+            if tick_count % 18 == 0:
+                import random
+                if random.random() < 0.7:  # 70% шанс события
+                    event = EventService.trigger_random_event()
+                    logger.info(f"🌍 Событие: {event['name']}")
+                    # Уведомляем активных игроков
+                    try:
+                        from db import db as _db
+                        all_users = _db.get_all_users_energy()
+                        notified = 0
+                        for u in all_users[:50]:  # не более 50 уведомлений
+                            try:
+                                await bot.send_message(u["user_id"],
+                                    f"🌍 <b>Рыночное событие!</b>\n\n{event['message']}\n\n"
+                                    f"📊 Проверьте /рынок для актуальных цен")
+                                notified += 1
+                            except Exception:
+                                pass
+                        logger.info(f"🌍 Уведомлено {notified} игроков")
+                    except Exception as e:
+                        logger.warning(f"Ошибка уведомления о событии: {e}")
 
         except asyncio.CancelledError:
             break
@@ -192,23 +223,26 @@ async def on_startup():
     private_commands = [
         BotCommand(command="start",      description="🎮 Начать игру"),
         BotCommand(command="balance",    description="💰 Мой баланс"),
-        BotCommand(command="business",   description="🏭 Мои бизнесы"),
-        BotCommand(command="shop",       description="🛒 Купить бизнес/энергию"),
+        BotCommand(command="warehouse",  description="📦 Мой склад"),
+        BotCommand(command="market",     description="📊 Рынок ресурсов"),
+        BotCommand(command="sell",       description="💸 Продать ресурс NPC"),
+        BotCommand(command="buy",        description="🛍️ Купить ресурс у NPC"),
+        BotCommand(command="order",      description="📋 Создать P2P ордер"),
         BotCommand(command="jackpot",    description="🎰 Джекпот"),
         BotCommand(command="lottery",    description="🎲 Лотерея"),
         BotCommand(command="credit",     description="💳 Взять кредит"),
         BotCommand(command="repay",      description="💸 Погасить кредит"),
         BotCommand(command="bankrupt",   description="🏳️ Объявить банкротство"),
-        BotCommand(command="profile",    description="👤 Мой профиль"),
         BotCommand(command="top",        description="🏆 Таблица лидеров"),
         BotCommand(command="help",       description="❓ Помощь"),
     ]
 
     group_commands = [
-        BotCommand(command="balance",  description="💰 Мой баланс"),
-        BotCommand(command="top",      description="🏆 Топ игроков"),
-        BotCommand(command="jackpot",  description="🎰 Джекпот"),
-        BotCommand(command="lottery",  description="🎲 Лотерея"),
+        BotCommand(command="balance",    description="💰 Мой баланс"),
+        BotCommand(command="top",        description="🏆 Топ игроков"),
+        BotCommand(command="market",     description="📊 Рынок"),
+        BotCommand(command="jackpot",    description="🎰 Джекпот"),
+        BotCommand(command="lottery",    description="🎲 Лотерея"),
     ]
 
     try:
