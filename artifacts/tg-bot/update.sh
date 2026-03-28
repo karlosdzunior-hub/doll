@@ -7,7 +7,7 @@
 set -e
 
 BOT_DIR="/root/microbot"
-RAW="https://raw.githubusercontent.com/karlosdzunior-hub/doll/main/artifacts/tg-bot"
+RAW="https://raw.githubusercontent.com/karlosdzunior-hub/doll/main"
 SERVICE_NAME="microbot"
 
 echo "=================================="
