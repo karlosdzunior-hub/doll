@@ -23,13 +23,23 @@ class BotConfig:
     # ==================== РЕСУРСЫ ====================
     RESOURCES: Dict[str, dict] = field(
         default_factory=lambda: {
-            "food":      {"name": "🍎 Еда",         "base_price": 10.0},
-            "materials": {"name": "🔧 Материалы",   "base_price": 20.0},
-            "tech":      {"name": "💻 Технологии",  "base_price": 50.0},
-            "crypto":    {"name": "🪙 Крипто",       "base_price": 100.0},
+            "lemons":  {"name": "🍋 Лимоны",          "base_price": 6.5},
+            "grain":   {"name": "🌾 Зерно",            "base_price": 12.0},
+            "goods":   {"name": "📦 Товары",            "base_price": 30.0},
+            "digital": {"name": "💾 Цифровые товары",  "base_price": 47.5},
         }
     )
-    RESOURCE_MAX: int = 1000
+    RESOURCE_MAX: int = 100       # лимит склада
+
+    # NPC-цены (бот покупает/продаёт по фиксированным ценам ±20%)
+    NPC_PRICES: Dict[str, dict] = field(
+        default_factory=lambda: {
+            "lemons":  {"buy": 5.0,  "sell": 8.0},   # бот покупает у игрока / продаёт игроку
+            "grain":   {"buy": 10.0, "sell": 14.0},
+            "goods":   {"buy": 25.0, "sell": 35.0},
+            "digital": {"buy": 40.0, "sell": 55.0},
+        }
+    )
 
     # ==================== ЭНЕРГИЯ ====================
     MAX_ENERGY: int = 100
@@ -37,52 +47,68 @@ class BotConfig:
     BASE_REGEN_RATE: int = 1        # +1 энергия каждые 10 мин
     REGEN_INTERVAL: int = 600       # 10 минут в секундах
 
-    # ==================== БИЗНЕСЫ (БАЛАНСИРОВАННЫЕ) ====================
+    # ==================== БИЗНЕСЫ (ПРОИЗВОДСТВО РЕСУРСОВ) ====================
     BUSINESSES: Dict[str, dict] = field(
         default_factory=lambda: {
             "lemonade": {
-                "name":           "🍋 Лимонадная",
-                "resource":       "food",
-                "income_per_hour": 5.0,     # $5/час
-                "base_cost":      50.0,      # цена: $50
-                "energy_cost":    1,         # 1 энергия/час
+                "name":            "🍋 Лимонадная",
+                "produces":        "lemons",   # производит ресурс
+                "produce_amount":  5,           # 5 шт/час
+                "requires":        None,        # не требует ресурсов
+                "require_amount":  0,
+                "income_per_hour": 5.0,         # $5/час (доп. доход)
+                "base_cost":       50.0,
+                "energy_cost":     1,
             },
             "farm": {
-                "name":           "🌾 Ферма",
-                "resource":       "food",
-                "income_per_hour": 15.0,    # $15/час
-                "base_cost":      200.0,    # цена: $200
-                "energy_cost":    2,        # 2 энергии/час
+                "name":            "🌾 Ферма",
+                "produces":        "grain",
+                "produce_amount":  10,
+                "requires":        None,
+                "require_amount":  0,
+                "income_per_hour": 15.0,
+                "base_cost":       200.0,
+                "energy_cost":     2,
             },
             "factory": {
-                "name":           "🏭 Завод",
-                "resource":       "materials",
-                "income_per_hour": 50.0,   # $50/час
-                "base_cost":      600.0,   # цена: $600
-                "energy_cost":    5,       # 5 энергии/час
+                "name":            "🏭 Завод",
+                "produces":        "goods",
+                "produce_amount":  8,
+                "requires":        "grain",    # требует зерно
+                "require_amount":  5,          # 5 grain/час
+                "income_per_hour": 50.0,
+                "base_cost":       600.0,
+                "energy_cost":     5,
             },
             "it_company": {
-                "name":           "💻 IT-бизнес",
-                "resource":       "tech",
-                "income_per_hour": 120.0,  # $120/час
-                "base_cost":      1500.0,  # цена: $1500
-                "energy_cost":    8,       # 8 энергии/час
+                "name":            "💻 IT-бизнес",
+                "produces":        "digital",
+                "produce_amount":  15,
+                "requires":        None,
+                "require_amount":  0,
+                "income_per_hour": 120.0,
+                "base_cost":       1500.0,
+                "energy_cost":     10,
             },
             "crypto_farm": {
-                "name":           "🪙 Крипто-ферма",
-                "resource":       "crypto",
-                "income_per_hour": 250.0,  # $250/час
-                "base_cost":      3000.0,  # цена: $3000
-                "energy_cost":    15,      # 15 энергии/час
+                "name":            "🪙 Крипто-ферма",
+                "produces":        None,        # только деньги
+                "produce_amount":  0,
+                "requires":        None,
+                "require_amount":  0,
+                "income_per_hour": 250.0,       # $250/час (только деньги)
+                "base_cost":       3000.0,
+                "energy_cost":     20,
             },
         }
     )
 
     # ==================== РЫНОК ====================
-    PRICE_UPDATE_INTERVAL: int = 300
+    PRICE_UPDATE_INTERVAL: int = 1800   # обновление цен каждые 30 минут
+    MARKET_EVENT_INTERVAL: int = 5400   # события каждые 1.5 часа (90 мин)
     MIN_PRICE_MULTIPLIER: float = 0.5
     MAX_PRICE_MULTIPLIER: float = 3.0
-    MARKET_FEE: float = 0.05
+    MARKET_FEE: float = 0.05            # 5% комиссия
 
     # ==================== ПЕРЕВОДЫ ====================
     TRANSFER_FEE: float = 0.02        # 2% комиссия
