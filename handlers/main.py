@@ -1234,7 +1234,7 @@ async def cmd_business(message: Message):
 
 @router.message(F.chat.type != "private", Command("market"))
 async def cmd_market(message: Message):
-    await chat_market(message)
+    await cmd_market_npc(message)
 
 @router.message(F.chat.type != "private", Command("top"))
 async def cmd_top(message: Message):
@@ -1585,6 +1585,285 @@ async def successful_payment(message: Message):
         )
 
     await message.answer(success_message)
+
+
+# ==================== РЫНОК И СКЛАД ====================
+
+RESOURCE_ALIASES = {
+    "lemons": "lemons", "лимоны": "lemons", "лимон": "lemons",
+    "grain": "grain", "зерно": "grain", "зерна": "grain",
+    "goods": "goods", "товары": "goods", "товар": "goods",
+    "digital": "digital", "цифровые": "digital", "цифровой": "digital",
+}
+
+
+def _parse_resource(text: str):
+    return RESOURCE_ALIASES.get(text.lower())
+
+
+@router.message(Command("рынок", "market"))
+async def cmd_market_npc(message: Message):
+    user_id = message.from_user.id
+    username = message.from_user.username or message.from_user.first_name
+    db.create_user(user_id, username)
+
+    prices = db.get_npc_prices_with_variance()
+    text = "📊 <b>NPC Рынок</b> (цены ±20%)\n\n"
+    for res_key, p in prices.items():
+        res_name = config.RESOURCES[res_key]["name"]
+        text += f"{res_name}\n"
+        text += f"  🟢 Бот купит у вас: ${p['buy']:.2f}/ед.\n"
+        text += f"  🔴 Продаст вам:      ${p['sell']:.2f}/ед.\n\n"
+
+    events = []
+    try:
+        from services import EventService as ES
+        events = ES.get_active_events_list()
+    except Exception:
+        pass
+    if events:
+        text += "🌍 <b>Активные события:</b>\n"
+        for e in events:
+            text += f"• {e['name']}\n"
+        text += "\n"
+
+    text += "💡 /продать lemons 10  — продать NPC\n"
+    text += "💡 /купить grain 5     — купить у NPC\n"
+    text += "💡 /выставить lemons 10 9 — P2P ордер"
+
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🍋 Продать лимоны", callback_data="sell_lemons"),
+         InlineKeyboardButton(text="🌾 Продать зерно", callback_data="sell_grain")],
+        [InlineKeyboardButton(text="📦 Продать товары", callback_data="sell_goods"),
+         InlineKeyboardButton(text="💾 Продать цифровые", callback_data="sell_digital")],
+        [InlineKeyboardButton(text="📋 P2P Ордера", callback_data="p2p_list")],
+        [InlineKeyboardButton(text="📦 Мой склад", callback_data="warehouse")],
+    ])
+    await message.answer(text, reply_markup=kb)
+
+
+@router.message(Command("склад", "warehouse"))
+async def cmd_warehouse(message: Message):
+    user_id = message.from_user.id
+    username = message.from_user.username or message.from_user.first_name
+    db.create_user(user_id, username)
+    resources = db.get_user_resources(user_id)
+
+    text = "📦 <b>Ваш склад</b>\n\n"
+    for res_key, res_cfg in config.RESOURCES.items():
+        qty = int(resources.get(res_key, 0))
+        bar = "█" * (qty // 10) + "░" * (10 - qty // 10)
+        text += f"{res_cfg['name']}: <b>{qty}</b>/100\n{bar}\n\n"
+
+    text += f"💰 Баланс: <b>${db.get_balance(user_id):.2f}</b>"
+    await message.answer(text)
+
+
+@router.callback_query(F.data == "warehouse")
+async def cb_warehouse(callback: CallbackQuery):
+    await cmd_warehouse(callback.message)
+    await callback.answer()
+
+
+@router.message(Command("продать", "sell"))
+async def cmd_sell_resource(message: Message):
+    """Продать ресурс NPC: /продать lemons 10"""
+    user_id = message.from_user.id
+    username = message.from_user.username or message.from_user.first_name
+    db.create_user(user_id, username)
+
+    parts = (message.text or "").split()
+    if len(parts) < 3:
+        await message.answer(
+            "💡 Формат: <code>/продать [ресурс] [количество]</code>\n\n"
+            "Ресурсы: lemons, grain, goods, digital\n"
+            "Пример: /продать lemons 10"
+        )
+        return
+
+    res_key = _parse_resource(parts[1])
+    if not res_key:
+        await message.answer("❌ Неизвестный ресурс. Используйте: lemons, grain, goods, digital")
+        return
+
+    try:
+        qty = int(parts[2])
+        if qty <= 0:
+            raise ValueError
+    except ValueError:
+        await message.answer("❌ Количество должно быть целым числом > 0")
+        return
+
+    ok, msg, _ = db.npc_buy_from_player(user_id, res_key, qty)
+    emoji = "✅" if ok else "❌"
+    await message.answer(f"{emoji} {msg}")
+
+
+@router.message(Command("купить", "buy"))
+async def cmd_buy_resource(message: Message):
+    """Купить ресурс у NPC: /купить grain 5"""
+    user_id = message.from_user.id
+    username = message.from_user.username or message.from_user.first_name
+    db.create_user(user_id, username)
+
+    parts = (message.text or "").split()
+    if len(parts) < 3:
+        await message.answer(
+            "💡 Формат: <code>/купить [ресурс] [количество]</code>\n\n"
+            "Ресурсы: lemons, grain, goods, digital\n"
+            "Пример: /купить grain 5"
+        )
+        return
+
+    res_key = _parse_resource(parts[1])
+    if not res_key:
+        await message.answer("❌ Неизвестный ресурс. Используйте: lemons, grain, goods, digital")
+        return
+
+    try:
+        qty = int(parts[2])
+        if qty <= 0:
+            raise ValueError
+    except ValueError:
+        await message.answer("❌ Количество должно быть целым числом > 0")
+        return
+
+    ok, msg, _ = db.npc_sell_to_player(user_id, res_key, qty)
+    emoji = "✅" if ok else "❌"
+    await message.answer(f"{emoji} {msg}")
+
+
+@router.message(Command("выставить", "order"))
+async def cmd_create_order(message: Message):
+    """Создать P2P ордер: /выставить lemons 10 9"""
+    user_id = message.from_user.id
+    username = message.from_user.username or message.from_user.first_name
+    db.create_user(user_id, username)
+
+    parts = (message.text or "").split()
+    if len(parts) < 4:
+        await message.answer(
+            "💡 Формат: <code>/выставить [ресурс] [кол-во] [цена/ед.]</code>\n\n"
+            "Пример: /выставить lemons 10 9\n"
+            "Создаст ордер: продажа 10 лимонов по $9/ед."
+        )
+        return
+
+    res_key = _parse_resource(parts[1])
+    if not res_key:
+        await message.answer("❌ Неизвестный ресурс. Используйте: lemons, grain, goods, digital")
+        return
+
+    try:
+        qty = int(parts[2])
+        price = float(parts[3])
+        if qty <= 0 or price <= 0:
+            raise ValueError
+    except ValueError:
+        await message.answer("❌ Некорректные число или цена")
+        return
+
+    ok, msg, order_id = db.create_p2p_order(user_id, res_key, qty, price)
+    emoji = "✅" if ok else "❌"
+    if ok:
+        kb = InlineKeyboardMarkup(inline_keyboard=[[
+            InlineKeyboardButton(text="📋 Все ордера", callback_data="p2p_list")
+        ]])
+        await message.answer(f"{emoji} {msg}", reply_markup=kb)
+    else:
+        await message.answer(f"{emoji} {msg}")
+
+
+@router.message(Command("купить_у", "fillorder"))
+async def cmd_fill_order(message: Message):
+    """Купить по P2P ордеру: /купить_у 42"""
+    user_id = message.from_user.id
+    username = message.from_user.username or message.from_user.first_name
+    db.create_user(user_id, username)
+
+    parts = (message.text or "").split()
+    if len(parts) < 2:
+        await message.answer("💡 Формат: /купить_у [ID ордера]\nСписок: /рынок → P2P Ордера")
+        return
+
+    try:
+        order_id = int(parts[1])
+    except ValueError:
+        await message.answer("❌ ID ордера должен быть числом")
+        return
+
+    ok, msg = db.fill_p2p_order(user_id, order_id)
+    emoji = "✅" if ok else "❌"
+    await message.answer(f"{emoji} {msg}")
+
+
+# P2P список ордеров (inline)
+@router.callback_query(F.data == "p2p_list")
+async def cb_p2p_list(callback: CallbackQuery):
+    orders = db.get_active_orders()
+    if not orders:
+        await callback.message.edit_text(
+            "📋 <b>P2P Ордера</b>\n\nПока нет активных ордеров.\n\n"
+            "Создайте: /выставить lemons 10 9"
+        )
+        await callback.answer()
+        return
+
+    text = "📋 <b>P2P Ордера</b> (купить: /купить_у [ID])\n\n"
+    for o in orders[:15]:
+        res_name = config.RESOURCES.get(o["resource_type"], {}).get("name", o["resource_type"])
+        total = round(o["quantity"] * o["price"], 2)
+        text += f"#{o['id']} {res_name}: {int(o['quantity'])} ед. × ${o['price']:.2f} = ${total:.2f}\n"
+
+    text += "\n💡 /купить_у [ID] — купить ордер"
+    await callback.message.edit_text(text)
+    await callback.answer()
+
+
+# Быстрые кнопки продажи через рынок
+@router.callback_query(F.data.startswith("sell_"))
+async def cb_sell_quick(callback: CallbackQuery):
+    res_key = callback.data.replace("sell_", "")
+    user_id = callback.from_user.id
+    resources = db.get_user_resources(user_id)
+    qty = int(resources.get(res_key, 0))
+
+    if qty <= 0:
+        await callback.answer("У вас нет этого ресурса!", show_alert=True)
+        return
+
+    res_name = config.RESOURCES.get(res_key, {}).get("name", res_key)
+    npc = config.NPC_PRICES.get(res_key, {})
+    text = (
+        f"{res_name}\n"
+        f"У вас: {qty} ед.\n"
+        f"NPC купит по: ~${npc.get('buy', 0):.2f}/ед.\n\n"
+        f"Сколько продать?"
+    )
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text=f"Продать {min(qty, 10)}", callback_data=f"selldo_{res_key}_{min(qty, 10)}")],
+        [InlineKeyboardButton(text=f"Продать всё ({qty})", callback_data=f"selldo_{res_key}_{qty}")],
+        [InlineKeyboardButton(text="← Назад", callback_data="market_back")],
+    ])
+    await callback.message.edit_text(text, reply_markup=kb)
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("selldo_"))
+async def cb_sell_do(callback: CallbackQuery):
+    _, res_key, qty_str = callback.data.split("_", 2)
+    user_id = callback.from_user.id
+    qty = int(qty_str)
+    ok, msg, _ = db.npc_buy_from_player(user_id, res_key, qty)
+    emoji = "✅" if ok else "❌"
+    await callback.message.edit_text(f"{emoji} {msg}\n\n/склад — посмотреть склад")
+    await callback.answer()
+
+
+@router.callback_query(F.data == "market_back")
+async def cb_market_back(callback: CallbackQuery):
+    await cmd_market_npc(callback.message)
+    await callback.answer()
 
 
 # ==================== КНОПКА ДОБАВЛЕНИЯ В ЧАТ ====================
