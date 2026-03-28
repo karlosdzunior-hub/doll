@@ -1,12 +1,7 @@
-"""
-Production конфигурация бота "Микрокапитализм: Жизнь на 1 доллар"
-v2.0 — балансированная экономика, джекпот, кредиты, удержание
-"""
-
+""" Production конфигурация бота "Микрокапитализм: Жизнь на 1 доллар" v2.0 — балансированная экономика, джекпот, кредиты, удержание """
 import os
 from dataclasses import dataclass, field
 from typing import Dict
-
 
 @dataclass
 class BotConfig:
@@ -16,27 +11,27 @@ class BotConfig:
     DATABASE_URL: str = os.getenv("DATABASE_URL", "sqlite:///game.db")
 
     # ==================== СТАРТОВЫЕ ДАННЫЕ ====================
-    STARTING_BALANCE: float = 100.0       # $100 стартовый баланс
-    STARTING_ENERGY: int = 20             # 20 энергии стартовой
-    STARTING_TICKETS: int = 1             # 1 билет джекпота
+    STARTING_BALANCE: float = 100.0  # $100 стартовый баланс
+    STARTING_ENERGY: int = 20  # 20 энергии стартовой
+    STARTING_TICKETS: int = 1  # 1 билет джекпота
 
     # ==================== РЕСУРСЫ ====================
     RESOURCES: Dict[str, dict] = field(
         default_factory=lambda: {
-            "lemons":  {"name": "🍋 Лимоны",          "base_price": 6.5},
-            "grain":   {"name": "🌾 Зерно",            "base_price": 12.0},
-            "goods":   {"name": "📦 Товары",            "base_price": 30.0},
-            "digital": {"name": "💾 Цифровые товары",  "base_price": 47.5},
+            "lemons": {"name": "🍋 Лимоны", "base_price": 6.5},
+            "grain": {"name": "🌾 Зерно", "base_price": 12.0},
+            "goods": {"name": "📦 Товары", "base_price": 30.0},
+            "digital": {"name": "💾 Цифровые товары", "base_price": 47.5},
         }
     )
-    RESOURCE_MAX: int = 100       # лимит склада
+    RESOURCE_MAX: int = 100  # лимит склада
 
     # NPC-цены (бот покупает/продаёт по фиксированным ценам ±20%)
     NPC_PRICES: Dict[str, dict] = field(
         default_factory=lambda: {
-            "lemons":  {"buy": 5.0,  "sell": 8.0},   # бот покупает у игрока / продаёт игроку
-            "grain":   {"buy": 10.0, "sell": 14.0},
-            "goods":   {"buy": 25.0, "sell": 35.0},
+            "lemons": {"buy": 5.0, "sell": 8.0},  # бот покупает у игрока / продаёт игроку
+            "grain": {"buy": 10.0, "sell": 14.0},
+            "goods": {"buy": 25.0, "sell": 35.0},
             "digital": {"buy": 40.0, "sell": 55.0},
         }
     )
@@ -44,74 +39,74 @@ class BotConfig:
     # ==================== ЭНЕРГИЯ ====================
     MAX_ENERGY: int = 100
     MIN_ENERGY_TO_WORK: int = 10
-    BASE_REGEN_RATE: int = 1        # +1 энергия каждые 10 мин
-    REGEN_INTERVAL: int = 600       # 10 минут в секундах
+    BASE_REGEN_RATE: int = 1  # +1 энергия каждые 10 мин
+    REGEN_INTERVAL: int = 600  # 10 минут в секундах
 
     # ==================== БИЗНЕСЫ (ПРОИЗВОДСТВО РЕСУРСОВ) ====================
     BUSINESSES: Dict[str, dict] = field(
         default_factory=lambda: {
             "lemonade": {
-                "name":            "🍋 Лимонадная",
-                "produces":        "lemons",   # производит ресурс
-                "produce_amount":  5,           # 5 шт/час
-                "requires":        None,        # не требует ресурсов
-                "require_amount":  0,
-                "income_per_hour": 5.0,         # $5/час (доп. доход)
-                "base_cost":       50.0,
-                "energy_cost":     1,
+                "name": "🍋 Лимонадная",
+                "produces": "lemons",  # производит ресурс
+                "produce_amount": 5,  # 5 шт/час
+                "requires": None,  # не требует ресурсов
+                "require_amount": 0,
+                "income_per_hour": 5.0,  # $5/час (доп. доход)
+                "base_cost": 50.0,
+                "energy_cost": 1,
             },
             "farm": {
-                "name":            "🌾 Ферма",
-                "produces":        "grain",
-                "produce_amount":  10,
-                "requires":        None,
-                "require_amount":  0,
+                "name": "🌾 Ферма",
+                "produces": "grain",
+                "produce_amount": 10,
+                "requires": None,
+                "require_amount": 0,
                 "income_per_hour": 15.0,
-                "base_cost":       200.0,
-                "energy_cost":     2,
+                "base_cost": 200.0,
+                "energy_cost": 2,
             },
             "factory": {
-                "name":            "🏭 Завод",
-                "produces":        "goods",
-                "produce_amount":  8,
-                "requires":        "grain",    # требует зерно
-                "require_amount":  5,          # 5 grain/час
+                "name": "🏭 Завод",
+                "produces": "goods",
+                "produce_amount": 8,
+                "requires": "grain",  # требует зерно
+                "require_amount": 5,  # 5 grain/час
                 "income_per_hour": 50.0,
-                "base_cost":       600.0,
-                "energy_cost":     5,
+                "base_cost": 600.0,
+                "energy_cost": 5,
             },
             "it_company": {
-                "name":            "💻 IT-бизнес",
-                "produces":        "digital",
-                "produce_amount":  15,
-                "requires":        None,
-                "require_amount":  0,
+                "name": "💻 IT-бизнес",
+                "produces": "digital",
+                "produce_amount": 15,
+                "requires": None,
+                "require_amount": 0,
                 "income_per_hour": 120.0,
-                "base_cost":       1500.0,
-                "energy_cost":     10,
+                "base_cost": 1500.0,
+                "energy_cost": 10,
             },
             "crypto_farm": {
-                "name":            "🪙 Крипто-ферма",
-                "produces":        None,        # только деньги
-                "produce_amount":  0,
-                "requires":        None,
-                "require_amount":  0,
-                "income_per_hour": 250.0,       # $250/час (только деньги)
-                "base_cost":       3000.0,
-                "energy_cost":     20,
+                "name": "🪙 Крипто-ферма",
+                "produces": None,  # только деньги
+                "produce_amount": 0,
+                "requires": None,
+                "require_amount": 0,
+                "income_per_hour": 250.0,  # $250/час (только деньги)
+                "base_cost": 3000.0,
+                "energy_cost": 20,
             },
         }
     )
 
     # ==================== РЫНОК ====================
-    PRICE_UPDATE_INTERVAL: int = 1800   # обновление цен каждые 30 минут
-    MARKET_EVENT_INTERVAL: int = 5400   # события каждые 1.5 часа (90 мин)
+    PRICE_UPDATE_INTERVAL: int = 1800  # обновление цен каждые 30 минут
+    MARKET_EVENT_INTERVAL: int = 5400  # события каждые 1.5 часа (90 мин)
     MIN_PRICE_MULTIPLIER: float = 0.5
     MAX_PRICE_MULTIPLIER: float = 3.0
-    MARKET_FEE: float = 0.05            # 5% комиссия
+    MARKET_FEE: float = 0.05  # 5% комиссия
 
     # ==================== ПЕРЕВОДЫ ====================
-    TRANSFER_FEE: float = 0.02        # 2% комиссия
+    TRANSFER_FEE: float = 0.02  # 2% комиссия
 
     # ==================== VIP ====================
     VIP_COST_STARS: int = 50
@@ -121,17 +116,14 @@ class BotConfig:
 
     # ==================== ДОНАТ (TELEGRAM STARS) ====================
     # Энергия
-    ENERGY_20_COST: int = 5    # +20 энергии → 5⭐
-    ENERGY_50_COST: int = 10   # +50 энергии → 10⭐
-
+    ENERGY_20_COST: int = 5  # +20 энергии → 5⭐
+    ENERGY_50_COST: int = 10  # +50 энергии → 10⭐
     # Деньги
-    MONEY_200_COST: int = 5    # +$200 → 5⭐
-    MONEY_500_COST: int = 10   # +$500 → 10⭐
-
+    MONEY_200_COST: int = 5  # +$200 → 5⭐
+    MONEY_500_COST: int = 10  # +$500 → 10⭐
     # Билеты джекпота
-    TICKET_1_COST: int = 3     # 1 билет → 3⭐
-    TICKET_5_COST: int = 10    # 5 билетов → 10⭐
-
+    TICKET_1_COST: int = 3  # 1 билет → 3⭐
+    TICKET_5_COST: int = 10  # 5 билетов → 10⭐
     # Прочее
     BOOST_1H_COST: int = 10
     SHIELD_COST: int = 5
@@ -143,20 +135,19 @@ class BotConfig:
     LOTTERY_COST: float = 10.0
     LOTTERY_CHANCES: dict = field(
         default_factory=lambda: {
-            0:   0.70,   # 70% проигрыш
-            1.5: 0.25,   # 25% x1.5
-            3:   0.04,   # 4% x3
-            10:  0.01,   # 1% x10
+            0: 0.70,  # 70% проигрыш
+            1.5: 0.25,  # 25% x1.5
+            3: 0.04,  # 4% x3
+            10: 0.01,  # 1% x10
         }
     )
 
     # ==================== ДЖЕКПОТ ====================
-    JACKPOT_TICKET_COST: float = 10.0   # $10 за билет
-    JACKPOT_BANK_SHARE: float = 0.50    # 50% → в банк джекпота
-    JACKPOT_BURN_SHARE: float = 0.30    # 30% → сжигание
+    JACKPOT_TICKET_COST: float = 10.0  # $10 за билет
+    JACKPOT_BANK_SHARE: float = 0.50  # 50% → в банк джекпота
+    JACKPOT_BURN_SHARE: float = 0.30  # 30% → сжигание
     JACKPOT_SYSTEM_SHARE: float = 0.20  # 20% → система
-    JACKPOT_INTERVAL_HOURS: int = 6     # розыгрыш каждые 6 часов
-
+    JACKPOT_INTERVAL_HOURS: int = 6  # розыгрыш каждые 6 часов
     # Гарантированный первый выигрыш (онбординг)
     JACKPOT_FIRST_WIN_MULTIPLIER: float = 1.5
 
@@ -164,32 +155,29 @@ class BotConfig:
     CREDITS: dict = field(
         default_factory=lambda: {
             "small": {
-                "name":      "💵 Малый кредит",
-                "amount":    200.0,
-                "repay":     260.0,
-                "hours":     12,
+                "name": "💵 Малый кредит",
+                "amount": 200.0,
+                "repay": 260.0,
+                "hours": 12,
             },
             "medium": {
-                "name":      "💰 Средний кредит",
-                "amount":    500.0,
-                "repay":     700.0,
-                "hours":     24,
+                "name": "💰 Средний кредит",
+                "amount": 500.0,
+                "repay": 700.0,
+                "hours": 24,
             },
             "large": {
-                "name":      "🏦 Большой кредит",
-                "amount":    1000.0,
-                "repay":     1500.0,
-                "hours":     48,
+                "name": "🏦 Большой кредит",
+                "amount": 1000.0,
+                "repay": 1500.0,
+                "hours": 48,
             },
         }
     )
-    CREDIT_HOURLY_INTEREST: float = 0.02   # 2% в час пени за просрочку
-
-    # ==================== БАНКРОТСТВО ====================
-    BANKRUPTCY_DEBT_FORGIVE: float = 0.30  # списать 30% долга при банкротстве
+    CREDIT_HOURLY_INTEREST: float = 0.02  # 2% в час пени за просрочку
 
     # ==================== ФОНОВЫЕ ЗАДАЧИ ====================
-    TICK_INTERVAL: int = 300      # 5 минут
+    TICK_INTERVAL: int = 300  # 5 минут
     DEBT_CHECK_INTERVAL: int = 3600  # проверка долгов каждый час
 
     # ==================== ЛИМИТЫ ====================
@@ -207,18 +195,39 @@ class BotConfig:
     # ==================== ПЛАТЕЖИ STARS ====================
     PAYMENT_ITEMS: dict = field(
         default_factory=lambda: {
-            "energy_20":  {"name": "⚡ +20 Энергии",        "stars": 5},
-            "energy_50":  {"name": "🔥 +50 Энергии",        "stars": 10},
-            "money_200":  {"name": "💵 +$200",              "stars": 5},
-            "money_500":  {"name": "💰 +$500",              "stars": 10},
-            "ticket_1":   {"name": "🎫 1 билет джекпота",   "stars": 3},
-            "ticket_5":   {"name": "🎫 5 билетов джекпота", "stars": 10},
-            "boost_1h":   {"name": "⚡ Буст x2 (1 час)",    "stars": 10},
-            "shield":     {"name": "🛡️ Щит",                "stars": 5},
-            "lottery_premium": {"name": "🎰 Лотерея Премиум","stars": 2},
-            "vip_week":   {"name": "⭐ VIP (7 дней)",        "stars": 50},
+            "energy_20": {"name": "⚡ +20 Энергии", "stars": 5},
+            "energy_50": {"name": "🔥 +50 Энергии", "stars": 10},
+            "money_200": {"name": "💵 +$200", "stars": 5},
+            "money_500": {"name": "💰 +$500", "stars": 10},
+            "ticket_1": {"name": "🎫 1 билет джекпота", "stars": 3},
+            "ticket_5": {"name": "🎫 5 билетов джекпота", "stars": 10},
+            "boost_1h": {"name": "⚡ Буст x2 (1 час)", "stars": 10},
+            "shield": {"name": "🛡️ Щит", "stars": 5},
+            "lottery_premium": {"name": "🎰 Лотерея Премиум", "stars": 2},
+            "vip_week": {"name": "⭐ VIP (7 дней)", "stars": 50},
         }
     )
+
+    # ==================== АКТИВНОСТЬ ЧАТОВ (НОВОЕ) ====================
+    # Интервал авто-сообщений (минуты)
+    AUTO_MESSAGE_INTERVAL_MIN: int = 5
+    AUTO_MESSAGE_INTERVAL_MAX: int = 10
+    # Кулдаун между сообщениями в один чат (минуты)
+    CHAT_MESSAGE_COOLDOWN: int = 5
+    # Шанс отправки сообщения (0.0-1.0)
+    AUTO_MESSAGE_SEND_CHANCE: float = 0.7
+    # Шанс упоминания пользователя (0.0-1.0)
+    USER_MENTION_CHANCE: float = 0.3
+    # Время неактивности до сообщения "затих" (минуты)
+    CHAT_SILENT_THRESHOLD: int = 15
+    # Интервал проверки активности чатов (секунды)
+    CHAT_ACTIVITY_CHECK_INTERVAL: int = 60
+    # Интервал уведомлений джекпота (минуты)
+    JACKPOT_NOTIFICATION_INTERVAL: int = 30
+    # Порог джекпота для частых уведомлений ($)
+    JACKPOT_HIGH_THRESHOLD: float = 500.0
+    # Интервал уведомлений рынка (минуты)
+    MARKET_NOTIFICATION_INTERVAL: int = 30
 
 
 config = BotConfig()
