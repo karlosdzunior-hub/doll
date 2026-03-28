@@ -45,8 +45,11 @@ class EnergyService:
             # Генерация от электростанций
             energy_gen = db.get_total_energy_gen(user_id) / 12  # за 5 минут
 
-            # Потребление бизнесов
-            energy_cost = db.get_total_energy_cost(user_id) / 12  # за 5 минут
+            # Потребление бизнесов — только если энергии достаточно для работы
+            if current_energy >= config.MIN_ENERGY_TO_WORK:
+                energy_cost = db.get_total_energy_cost(user_id) / 12  # за 5 минут
+            else:
+                energy_cost = 0  # бизнесы не работают — энергия не тратится
 
             # Итого изменения
             net_change = energy_gen + base_regen - energy_cost
