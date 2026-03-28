@@ -35,7 +35,11 @@ FILES=(
     "services/jackpot.py"
     "services/market.py"
     "services/notifications.py"
+    "data/__init__.py"
+    "data/messages.py"
 )
+
+mkdir -p "$BOT_DIR/data"
 
 for FILE in "${FILES[@]}"; do
     echo "  $FILE"
