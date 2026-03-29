@@ -6,8 +6,8 @@ import logging
 from aiogram import Router, F, Bot
 from aiogram.types import ChatMemberUpdated, Message
 from aiogram.enums import ChatType
-from aiogram.filters import ChatMemberFilter, Command
-from aiogram.filters.chat_member_updated import ChatMemberUpdatedFilter
+from aiogram.filters import Command
+from aiogram.filters.chat_member_updated import ChatMemberUpdatedFilter, IS_NOT_MEMBER, IS_MEMBER
 from db import db
 from services.activity import activity_tracker, ActivityService
 from config import config
@@ -18,7 +18,7 @@ router = Router()
 
 # ==================== РЕГИСТРАЦИЯ ЧАТОВ ====================
 
-@router.chat_member(ChatMemberFilter(member_status_changed=("left", "member")))
+@router.my_chat_member(ChatMemberUpdatedFilter(IS_NOT_MEMBER >> IS_MEMBER))
 async def bot_added_to_chat(event: ChatMemberUpdated, bot: Bot):
     """
     Обработчик добавления бота в чат.
@@ -164,7 +164,7 @@ async def handle_chat_level_up(chat_id: int, new_level: int, bot: Bot):
 
 # ==================== КОМАНДЫ ЧАТА ====================
 
-@router.command("chat")
+@router.message(Command("chat"))
 async def chat_stats_command(message: Message):
     """Показать статистику чата."""
     chat = message.chat
@@ -195,7 +195,7 @@ async def chat_stats_command(message: Message):
     await message.answer(response)
 
 
-@router.command("topchats")
+@router.message(Command("topchats"))
 async def top_chats_command(message: Message):
     """Показать топ чатов."""
     chats = db.get_top_chats(10)
@@ -211,3 +211,4 @@ async def top_chats_command(message: Message):
         response += f"{medal} {chat['title'] or 'Чат'} — ур. {chat['level']} ({chat['xp']} XP)\n"
 
     await message.answer(response)
+
